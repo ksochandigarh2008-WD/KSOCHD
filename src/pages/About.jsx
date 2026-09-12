@@ -3,6 +3,7 @@ import { ArrowRight, Target, Eye } from 'lucide-react'
 import { useContent } from '../store/useSite'
 import { Reveal, SectionHeading } from '../components/ui'
 import { getIcon } from '../lib/iconMap'
+import { isYear } from '../lib/utils'
 import PageHero from '../components/PageHero'
 
 export default function About() {
@@ -42,13 +43,13 @@ export default function About() {
             <img src={c.about.image} alt="KSO volunteers" className="h-[360px] w-full rounded-3xl object-cover shadow-lift" loading="lazy" />
             <dl className="mt-6 space-y-3 rounded-2xl border border-ink-900/5 bg-white p-5 shadow-soft text-sm">
               {[
-                ['Founded', c.org.foundedYear],
+                isYear(c.org.foundedYear) && ['Founded', c.org.foundedYear],
                 ['Registered', c.org.registration],
                 ['Tax exemption', c.org.taxExemption],
                 ['FCRA', c.org.fcra],
                 ['Areas', c.org.area],
                 ['Office hours', c.org.hours],
-              ].map(([k, v]) => (
+              ].filter(Boolean).map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4 border-b border-ink-900/5 pb-2.5 last:border-0 last:pb-0">
                   <dt className="font-semibold text-ink-500">{k}</dt>
                   <dd className="text-right">{v}</dd>
@@ -87,7 +88,7 @@ export default function About() {
       {/* timeline */}
       <section className="container-page py-16">
         <Reveal>
-          <SectionHeading eyebrow="Our journey" title={`Since ${c.org.foundedYear}`} />
+          <SectionHeading eyebrow="Our journey" title={isYear(c.org.foundedYear) ? `Since ${c.org.foundedYear}` : 'Our journey so far'} />
         </Reveal>
         <div className="mx-auto mt-12 max-w-3xl">
           <ol className="relative border-l border-dashed border-brand-300 pl-8">

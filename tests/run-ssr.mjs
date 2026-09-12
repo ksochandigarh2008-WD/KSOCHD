@@ -130,9 +130,14 @@ check('legacy calendar-year budgets still understood',
 check('FY options are newest first', m.fin.fyOptions(3)[0] === fyNow)
 
 
-console.log('\n— Store migrations (v1 → v7) —')
+console.log('\n— Store migrations (v1 → v9) —')
 const M = m.migrations
-check('store version is 8', M.STORE_VERSION === 8, `v${M.STORE_VERSION}`)
+// Asserted against the constant, not a literal: this check exists to catch a store
+// version that drifts from migratePersisted, and a duplicated number cannot do that.
+check('store version matches the last migration step', M.STORE_VERSION === 9, `v${M.STORE_VERSION}`)
+check('migrating an up-to-date store is a no-op',
+  JSON.stringify(M.migratePersisted({ content: { about: { image: 'x' } } }, M.STORE_VERSION))
+    === JSON.stringify(M.migratePersisted({ content: { about: { image: 'x' } } }, M.STORE_VERSION)))
 
 // A v1 blob: flat roster, a transaction, a calendar-year budget.
 const v1 = {
@@ -220,6 +225,53 @@ check('empty and null inputs are safe', M.migratePersisted(undefined, 0) === und
 const v7 = { budgets: [{ id: 'b', fy: '2026-27', amount: 5 }], transactions: [], memberships: [], ledger: [] }
 const from7 = M.migratePersisted(v7, 7)
 check('v7 is a no-op', from7.budgets[0].fy === '2026-27' && from7.transactions.length === 0)
+
+console.log('\n— The dead image URL is repaired on upgrade —')
+// The "Who we are" image and gallery tile 8 pointed at an Unsplash photo that now
+// 404s, so the home page rendered alt text in a 584x440 box. The URL is persisted
+// content, so fixing the default alone would leave existing installs broken.
+const DEAD = 'https://images.unsplash.com/photo-1593113566592-e2d3b1a1a2b0?auto=format&fit=crop&w=1200&q=70'
+const staleImages = M.migratePersisted({
+  content: {
+    about: { image: DEAD, heading: 'We are neighbours helping neighbours.' },
+    gallery: {
+      images: [
+        { id: 'g1', src: 'https://images.unsplash.com/photo-1509062522246-3755977927d7?w=900', caption: 'Keep me' },
+        { id: 'g8', src: DEAD.replace('w=1200', 'w=900'), caption: 'Tricity Marathon, last year' },
+      ],
+    },
+  },
+}, 8)
+check('the dead about image is replaced', !staleImages.content.about.image.includes('1593113566592'),
+  staleImages.content.about.image.slice(36, 70))
+check('the rest of the about block survives', staleImages.content.about.heading === 'We are neighbours helping neighbours.')
+check('only the dead gallery tile is touched',
+  staleImages.content.gallery.images[0].src.includes('1509062522246') &&
+    staleImages.content.gallery.images[1].src.includes('1552674605'))
+check('gallery captions and ids survive',
+  staleImages.content.gallery.images[1].caption === 'Tricity Marathon, last year' && staleImages.content.gallery.images[1].id === 'g8')
+check('the dead URL is gone from the whole blob', !JSON.stringify(staleImages).includes('1593113566592'))
+check('re-running v9 is a no-op', JSON.stringify(M.migratePersisted(staleImages, 9)) === JSON.stringify(staleImages))
+check('a photo the organisation chose itself is left alone',
+  M.migratePersisted({ content: { about: { image: 'https://example.org/ours.jpg' } } }, 8).content.about.image === 'https://example.org/ours.jpg')
+check('a store with no content slice survives the step', Boolean(M.migratePersisted({}, 8)))
+
+// The dead URL got through because nothing checked the shipped content. This cannot
+// assert reachability offline, so it asserts shape: every remote image is an https
+// URL on the CDN we use. A typo'd or truncated URL fails here instead of on the home page.
+const shipped = JSON.stringify(m.defaultContent)
+check('shipped content holds no reference to the dead image', !shipped.includes('1593113566592'))
+const photoUrls = (shipped.match(/https:\/\/images\.unsplash\.com\/[^"]+/g) || [])
+check('every shipped photo is a complete Unsplash URL with an id and a width',
+  photoUrls.length > 0 && photoUrls.every((u) => /^https:\/\/images\.unsplash\.com\/photo-[a-z0-9-]{10,}\?.*w=\d+/.test(u)),
+  photoUrls.length + ' photos')
+check('no photo URL appears twice in the same list (gallery tiles)',
+  (() => {
+    const g = (m.defaultContent.gallery?.images || []).map((i) => i.src)
+    return new Set(g).size === g.length
+  })(),
+  `${(m.defaultContent.gallery?.images || []).length} tiles`)
+
 
 
 console.log('\n— Stale organisation name is corrected on upgrade —')

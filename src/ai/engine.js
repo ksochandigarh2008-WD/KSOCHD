@@ -7,7 +7,7 @@
  *                OpenRouter / Ollama / your own /ai/chat proxy) for natural answers.
  */
 
-import { formatCurrency } from '../lib/utils'
+import { formatCurrency, isYear } from '../lib/utils'
 
 /* ------------------------------------------------------------------ *
  * Providers
@@ -91,7 +91,10 @@ export function buildKnowledge(content) {
   }
 
   const org = content.org || {}
-  push('About the organisation', `${org.fullName} (${org.shortName}) is a non-profit based in ${org.city}. ${org.tagline}. Founded ${org.foundedYear}.`, 'about org kso')
+  // Only state a founding year that actually is one — otherwise the assistant
+  // recites the editor's to-do note ("Founded — confirm founding year —").
+  const founded = isYear(org.foundedYear) ? ` Founded ${org.foundedYear}.` : ''
+  push('About the organisation', `${org.fullName} (${org.shortName}) is a non-profit based in ${org.city}. ${org.tagline}.${founded}`, 'about org kso')
   push('Contact', `Address: ${org.address}. Phone: ${org.phone}. Email: ${org.email}. Office hours: ${org.hours}.`, 'contact address phone email office hours')
   push('Registration & tax', `${org.registration}. ${org.taxExemption}. ${org.fcra}.`, 'registration 80g tax exemption fcra legal')
   push('Donation methods', `UPI ID: ${org.upiId}. Bank: ${org.bankName}, account ${org.bankAccount}, IFSC ${org.bankIfsc}.`, 'donate donation payment upi bank transfer')

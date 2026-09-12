@@ -6,7 +6,7 @@ import {
 import { useContent } from '../store/useSite'
 import { Reveal, Counter, SectionHeading, Badge } from '../components/ui'
 import { getIcon } from '../lib/iconMap'
-import { formatDate, formatNumber, isUpcoming, cn } from '../lib/utils'
+import { formatDate, formatNumber, isUpcoming, isYear, cn } from '../lib/utils'
 
 export default function Home() {
   const c = useContent()
@@ -70,7 +70,7 @@ export default function Home() {
               </div>
               <div className="absolute -bottom-6 -left-4 hidden w-56 rounded-2xl bg-white p-4 shadow-lift sm:block">
                 <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">This month</p>
-                <p className="mt-1 font-display text-lg font-bold">{(c.events || []).filter((e) => isUpcoming(e.date)).length} upcoming drives</p>
+                <p className="mt-1 font-display text-lg font-bold text-ink-900">{(c.events || []).filter((e) => isUpcoming(e.date)).length} upcoming drives</p>
                 <Link to="/events" className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-brand-700 hover:gap-2">
                   See events <ArrowRight className="h-3.5 w-3.5" />
                 </Link>
@@ -140,10 +140,12 @@ export default function Home() {
           <Reveal>
             <div className="relative">
               <img src={c.about.image} alt="KSO field work" className="h-[440px] w-full rounded-3xl object-cover shadow-lift" loading="lazy" />
-              <div className="absolute -bottom-5 -right-3 rounded-2xl bg-accent-500 px-5 py-4 shadow-lift sm:-right-6">
-                <p className="font-display text-3xl font-bold text-brand-900">{c.org.foundedYear}</p>
-                <p className="text-xs font-semibold text-brand-900/80">the year we started</p>
-              </div>
+              {isYear(c.org.foundedYear) && (
+                <div className="absolute -bottom-5 -right-3 rounded-2xl bg-accent-500 px-5 py-4 shadow-lift sm:-right-6">
+                  <p className="font-display text-3xl font-bold text-brand-900">{c.org.foundedYear}</p>
+                  <p className="text-xs font-semibold text-brand-900/80">the year we started</p>
+                </div>
+              )}
             </div>
           </Reveal>
           <Reveal delay={100}>

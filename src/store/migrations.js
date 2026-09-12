@@ -190,7 +190,39 @@ export const migratePersisted = (persisted, version) => {
     }
   }
 
+  // v8 → v9: the "Who we are" image and gallery tile 8 pointed at an Unsplash photo
+  // that now 404s, so the home page rendered its alt text inside a 584x440 box.
+  // The URL lives in persisted content, so correcting the default alone would leave
+  // every existing install (and the browser of anyone who has already visited) showing
+  // the broken image. Rewrite it only where the dead URL is still present — an exact
+  // match, so a photo the organisation has since chosen itself is never touched.
+  if (from < 9) {
+    const DEAD = 'photo-1593113566592-e2d3b1a1a2b0'
+    const ABOUT_IMAGE = 'photo-1497486751825-1233686d5d80' // community photo
+    const MARATHON_IMAGE = 'photo-1552674605-db6ffd4facb5' // event photo, already in use
+    const has = (v) => typeof v === 'string' && v.includes(DEAD)
+    const swap = (url, target) => String(url).replace(DEAD, target)
+
+    if (has(next.content?.about?.image)) {
+      next.content = {
+        ...next.content,
+        about: { ...next.content.about, image: swap(next.content.about.image, ABOUT_IMAGE) },
+      }
+    }
+    if (Array.isArray(next.content?.gallery?.images)) {
+      next.content = {
+        ...next.content,
+        gallery: {
+          ...next.content.gallery,
+          images: next.content.gallery.images.map((img) =>
+            has(img?.src) ? { ...img, src: swap(img.src, MARATHON_IMAGE) } : img,
+          ),
+        },
+      }
+    }
+  }
+
   return next
 }
 
-export const STORE_VERSION = 8
+export const STORE_VERSION = 9

@@ -111,6 +111,18 @@ export const copyToClipboard = async (text) => {
   }
 }
 
+/**
+ * A founding year is four digits or it is not a year at all.
+ *
+ * `defaultContent.js` ships `foundedYear: '— confirm founding year —'` so the admin
+ * panel can show it as a to-do. That string was rendering verbatim on the public
+ * home page, About page, footer and even inside the assistant's answers — a note to
+ * the editor shown to visitors. The admin panel already validates against this exact
+ * rule (see `schemas.js`), so the public render sites now use it too: no year, no
+ * claim, rather than a placeholder pretending to be one.
+ */
+export const isYear = (value) => /^\d{4}$/.test(String(value ?? '').trim())
+
 export const validateEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(email || '').trim())
 
 export const validatePhone = (phone) =>

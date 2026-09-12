@@ -63,7 +63,7 @@ export const defaultContent = {
       'We publish where every rupee goes, we keep our overheads under 12%, and we do not hand out help in ways that create dependence. Our job is to build capacity, then step back.',
     ],
     image:
-      'https://images.unsplash.com/photo-1593113566592-e2d3b1a1a2b0?auto=format&fit=crop&w=1200&q=70',
+      'https://images.unsplash.com/photo-1497486751825-1233686d5d80?auto=format&fit=crop&w=1200&q=70',
     values: [
       {
         id: 'v1',
@@ -295,7 +295,7 @@ export const defaultContent = {
       { id: 'g5', src: 'https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=900&q=70', caption: 'Library corner, afternoon shift', tag: 'Education' },
       { id: 'g6', src: 'https://images.unsplash.com/photo-1600880292203-757bb62b4baf?auto=format&fit=crop&w=900&q=70', caption: 'Volunteer packing evening', tag: 'Volunteers' },
       { id: 'g7', src: 'https://images.unsplash.com/photo-1576091160550-2173dba999ef?auto=format&fit=crop&w=900&q=70', caption: 'Nutrition check-up', tag: 'Health' },
-      { id: 'g8', src: 'https://images.unsplash.com/photo-1593113566592-e2d3b1a1a2b0?auto=format&fit=crop&w=900&q=70', caption: 'Tricity Marathon, last year', tag: 'Fundraiser' },
+      { id: 'g8', src: 'https://images.unsplash.com/photo-1552674605-db6ffd4facb5?auto=format&fit=crop&w=900&q=70', caption: 'Tricity Marathon, last year', tag: 'Fundraiser' },
     ],
   },
 

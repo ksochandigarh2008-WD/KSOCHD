@@ -2,7 +2,7 @@
 
 Written so a failed turn costs nothing. **Read this first when resuming.**
 
-Last verified state: **`npm test` → 510 PASS / 0 FAIL**, `npx vite build` ✓ (12 s).
+Last verified state: **`npm test` → 522 PASS / 0 FAIL**, `npx vite build` ✓ (12 s).
 Environment note: `node_modules` is NOT persisted between sessions — run `npm ci` first (≈7 s).
 
 ---
@@ -158,6 +158,36 @@ personal access token`, so that is a Settings click, not a script.
 The Pages API refused to enable it: `POST /repos/…/pages` → `403 Resource not accessible by
 personal access token`. That is a token-scope limit, not a repo setting that can be worked around
 from here.
+
+## UI/UX review round — four defects fixed
+
+Reviewed by rendering the running app in a real Chromium (1440 · 1280 · 768 · 390 · 320), 41
+screenshots, plus automated contrast, overflow and truncation sweeps. Findings and the fixing
+work are in `ux-review/UI-UX-REVIEW.html` outside this repo, with screenshots in `ux-review/shots/`.
+
+- **The hero card's headline was invisible** — white on white, contrast **1:1**. The hero
+  `<section>` sets `text-white`; the card set `bg-white` but no text colour. Now 17.85:1.
+- **The "Who we are" image 404'd.** `photo-1593113566592…` is dead (the same URL was gallery
+  tile 8). Because the URL lives in *persisted* content, correcting the default alone would
+  have left every existing install broken, so there is a **v8 → v9 migration** that rewrites it
+  in place — targeted (an exact URL match, so a photo the organisation picked itself is never
+  touched), idempotent, and proven against a real v8 store in a browser.
+- **`foundedYear` was a placeholder shown to visitors** — `— confirm founding year —` rendered
+  on the home page, About (twice), the footer, and inside the assistant's answers. New shared
+  `isYear()` guard: no year, no claim. The admin panel still shows the field as the to-do it is.
+- **Membership KPI captions were truncated** (`Expired or due withi…`). `StatCard`'s hint now
+  wraps instead of clipping.
+
+Tests: **522 PASS / 0 FAIL** (was 510 — 12 new, none relaxed), 0 console errors, build clean.
+`store version is 8` was asserted against a hardcoded literal, which is the one thing that check
+exists to prevent; it now reads the constant. New tests cover the migration end to end, plus
+"every shipped photo is a complete Unsplash URL" — the dead image got in because nothing checked.
+
+**Still open** (recorded, not fixed): the assistant's opening line is clipped, `describeAmount`
+prints "1 ×" for a single unit, duplicate volunteer role chips, the 404 page tells visitors to use
+the admin panel, no webfont, and P1s from the review (dark-on-dark sub-heading, 2.8:1 accent
+badges, "Unique donors" counting event and in-kind payers, the chat pill covering the footer's
+80G line, nav labels ellipsised).
 
 ## Not started
 

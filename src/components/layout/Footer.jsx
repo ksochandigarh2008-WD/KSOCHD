@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { Facebook, Instagram, Twitter, Youtube, Linkedin, Mail, Phone, MapPin, ArrowUpRight } from 'lucide-react'
 import { useContent, useSite } from '../../store/useSite'
 import { REOPEN_EVENT, analyticsIdFor } from '../../lib/analytics'
-import { formatDate } from '../../lib/utils'
+import { formatDate, isYear } from '../../lib/utils'
 
 const socialIcon = { Facebook, Instagram, Twitter, Youtube, Linkedin }
 
@@ -21,7 +21,8 @@ export default function Footer() {
             <p className="font-display text-2xl font-bold">{org.shortName}</p>
             <p className="mt-1 text-sm text-white/70">{org.fullName}</p>
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-white/70">
-              {org.tagline}. Working across {org.area} since {org.foundedYear}.
+              {org.tagline}. Working across {org.area}
+              {isYear(org.foundedYear) ? ` since ${org.foundedYear}.` : '.'}
             </p>
             <div className="mt-5 flex gap-2">
               {Object.entries(org.social || {}).map(([k, url]) => {

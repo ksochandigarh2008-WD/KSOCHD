@@ -484,7 +484,10 @@ export function StatCard({ label, value, hint, icon: Icon, tone = 'brand', trend
         <div className="min-w-0">
           <p className="truncate text-[11px] font-bold uppercase tracking-wide text-ink-500">{label}</p>
           <p className="mt-1 font-display text-2xl font-bold leading-none">{value}</p>
-          {hint && <p className="mt-1.5 truncate text-[11px] text-ink-500">{hint}</p>}
+          {/* Wraps rather than truncates: "Expired or due within 30 days" was being cut
+              to "Expired or due withi…" in the five-column KPI row, and a half-sentence
+              is worse than a second line. Cards in a grid row stay the same height. */}
+          {hint && <p className="mt-1.5 text-[11px] leading-snug text-ink-500">{hint}</p>}
           {trend != null && (
             <p className={cn('mt-1.5 text-[11px] font-semibold', trend >= 0 ? 'text-emerald-600' : 'text-red-600')}>
               {trend >= 0 ? '▲' : '▼'} {Math.abs(trend)}% vs previous period
