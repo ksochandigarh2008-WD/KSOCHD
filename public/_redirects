@@ -1,0 +1,4 @@
+# Single-page app fallback: every unknown path must still serve the app, otherwise a
+# visitor who refreshes /donate (or follows a link to it) gets a 404.
+# Works on Netlify and Cloudflare Pages.
+/*    /index.html   200

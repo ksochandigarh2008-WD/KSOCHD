@@ -1,0 +1,30 @@
+# dependencies (never commit these — reinstalled with npm ci)
+node_modules/
+
+# build and test output
+dist/
+dist-ssr/
+tests/.build/
+coverage/
+.vite/
+
+# local secrets and environment
+.env
+.env.local
+.env.*.local
+*.local
+
+# hosts
+.vercel/
+.netlify/
+
+# editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# logs
+*.log
+npm-debug.log*
+yarn-error.log*

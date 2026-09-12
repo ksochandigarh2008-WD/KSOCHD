@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>KSO Chandigarh</title>
+    <script>
+      // GitHub Pages serves this file for any path it does not have on disk, which is
+      // every route in a single-page app. Remember where the visitor was heading, send
+      // them to the app root, and let the app put the URL back once it boots.
+      // ("./" resolves against the deployment directory, so this also works for
+      // project sites deployed under BASE_PATH.)
+      ;(function () {
+        try {
+          sessionStorage.setItem('spa-redirect', location.pathname + location.search + location.hash)
+        } catch (e) {}
+        location.replace('./')
+      })()
+    </script>
+  </head>
+  <body></body>
+</html>

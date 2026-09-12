@@ -1,0 +1,17 @@
+# Netlify — free tier.
+# Build settings live here; the SPA rewrite lives in public/_redirects so the same
+# file also works on Cloudflare Pages. (Netlify reads both, so defining the redirect
+# twice would only fight itself.)
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Do not let the admin panel be indexed or cached by intermediaries.
+[[headers]]
+  for = "/admin"
+  [headers.values]
+    X-Robots-Tag = "noindex"
+    Cache-Control = "no-store"

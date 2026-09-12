@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+
+# Replace with your real domain before going live
+# Sitemap: https://ksochandigarh.org/sitemap.xml
