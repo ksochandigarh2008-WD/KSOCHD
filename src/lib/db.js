@@ -17,6 +17,7 @@ import { supabase, isSupabase, TABLES } from './supabase'
 import { api, isApiMode } from '../api/client'
 import { useSite } from '../store/useSite'
 import { ensureMemberNo } from './membership'
+import { toRow, fromRow, fromRows } from './rowmap'
 
 const LATENCY = 90
 const wait = (ms = LATENCY) => new Promise((r) => setTimeout(r, ms))
@@ -58,7 +59,9 @@ function makeResource(kind, table, { prepare } = {}) {
           .from(table)
           .select('*')
           .order(kind === 'transactions' || kind === 'pledges' || kind === 'vouchers' ? 'date' : 'created_at', { ascending: false })
-        return unwrap({ data, error })
+        // The database speaks snake_case; everything above this line speaks
+        // camelCase, exactly as the local and REST paths do.
+        return fromRows(kind, unwrap({ data, error }))
       }
       if (isApiMode) {
         const rows = await rest.list()
@@ -72,8 +75,8 @@ function makeResource(kind, table, { prepare } = {}) {
       const base = { id: uuidv4(), created_at: new Date().toISOString(), ...row }
       const record = prepare ? prepare(base) : base
       if (isSupabase) {
-        const { data, error } = await supabase.from(table).insert(record).select().single()
-        return unwrap({ data, error })
+        const { data, error } = await supabase.from(table).insert(toRow(kind, record)).select().single()
+        return fromRow(kind, unwrap({ data, error }))
       }
       if (isApiMode) {
         const created = await rest.create(record)
@@ -86,8 +89,9 @@ function makeResource(kind, table, { prepare } = {}) {
 
     async update(id, patch) {
       if (isSupabase) {
-        const { data, error } = await supabase.from(table).update(patch).eq('id', id).select().single()
-        return unwrap({ data, error })
+        const { data, error } = await supabase
+          .from(table).update(toRow(kind, patch)).eq('id', id).select().single()
+        return fromRow(kind, unwrap({ data, error }))
       }
       if (isApiMode) {
         const updated = await rest.update(id, patch)

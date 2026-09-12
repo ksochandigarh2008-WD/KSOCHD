@@ -42,7 +42,9 @@ export { db }
 // keeps rendering stale rows.
 export const queryClient = qc
 export { seedData as seed }
+export * as booksData from '../src/data/accounts'
 export { formatCurrency } from '../src/lib/utils'
 export * as membership from '../src/lib/membership'
+export * as rowmap from '../src/lib/rowmap'
 export * as docs from '../src/lib/documents'
 export * as accounting from '../src/lib/accounting'

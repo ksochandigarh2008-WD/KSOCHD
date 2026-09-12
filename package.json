@@ -9,11 +9,12 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "deploy:pages": "npm run build && gh-pages -d dist",
-    "test": "npm run test:scan && npm run test:ssr && npm run test:dom",
+    "test": "npm run test:scan && npm run test:content && npm run test:ssr && npm run test:dom",
     "test:ssr": "SMOKE_ENTRY=entry.ssr.jsx SMOKE_OUT=.build vite build --config tests/vite.config.js && node tests/run-ssr.mjs",
     "test:dom": "SMOKE_ENTRY=entry.dom.jsx SMOKE_OUT=.build vite build --config tests/vite.config.js && node tests/run-dom.mjs",
     "sitemap": "node scripts/make-sitemap.mjs",
-    "test:scan": "node tests/scan-identifiers.mjs"
+    "test:scan": "node tests/scan-identifiers.mjs",
+    "test:content": "node tests/scan-content-coverage.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

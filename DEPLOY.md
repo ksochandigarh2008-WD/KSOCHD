@@ -27,8 +27,22 @@ already committed.
 
 ### GitHub Pages
 The workflow in `.github/workflows/deploy-pages.yml` builds and deploys on every push to `main`.
-In the repo, set **Settings → Pages → Source: GitHub Actions**. If the site lives at
-`https://user.github.io/kso-website`, add a repository variable `BASE_PATH=/kso-website`.
+Two things have to be done by hand, once:
+
+1. **Settings → Pages → Source: GitHub Actions.** The workflow cannot do this for itself — the
+   Pages API refuses it (`403 Resource not accessible by personal access token`) unless the token
+   has explicit Pages permission.
+2. If the token you push with has no **`workflow`** scope, GitHub rejects any commit that touches
+   `.github/workflows/`. Commit the rest, push, and add the workflow from a token that has it (or
+   from the GitHub web UI).
+
+This repo deploys as a **project site** — `https://ksochandigarh2008-wd.github.io/KSOCHD/` — so
+`BASE_PATH` must be `/KSOCHD`, which the workflow already defaults to. Set the repository variable
+`BASE_PATH` only if that changes, e.g. to `/` for a custom domain at the root.
+
+`public/404.html` (the deep-link interceptor, paired with the `spa-redirect` restore in
+`src/main.jsx`) is what makes a shared link open the right page. Do **not** replace it with a copy
+of `index.html`: the app would boot on the wrong route and silently drop the link.
 
 ### AWS S3 + CloudFront (for image/media heavy sites)
 ```bash
@@ -102,7 +116,8 @@ create table if not exists vouchers (
   status text default 'Posted',
   -- [{"account":"1002","debit":5000,"credit":0,"fund":"Unrestricted","program":""}]
   lines jsonb default '[]'::jsonb,
-  source text default 'transaction', source_id text, grant_id text
+  source text default 'transaction', source_id text, grant_id text,
+  member_id uuid references members(id) on delete set null
 );
 
 create table if not exists grants (
@@ -142,7 +157,8 @@ create table if not exists transactions (
   created_at timestamptz default now(),
   date date not null, type text not null, category text, amount numeric not null,
   program text, party text, method text, reference text, status text default 'Cleared',
-  note text, member_id uuid references members(id) on delete set null
+  note text, member_id uuid references members(id) on delete set null,
+  fund text
 );
 
 create table if not exists pledges (
@@ -155,7 +171,11 @@ create table if not exists pledges (
 create table if not exists budgets (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz default now(),
-  program text not null, year int not null, amount numeric not null
+  program text not null, amount numeric not null,
+  -- `fy` is the financial-year label ("2026-27"), which is what the app writes.
+  -- `year` is kept nullable: budgets recorded before the FY switch still carry a
+  -- calendar year, and finance.js budgetVsActual() reads both.
+  fy text, year int
 );
 
 create index if not exists transactions_date_idx on transactions (date desc);

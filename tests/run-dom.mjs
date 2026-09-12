@@ -301,6 +301,102 @@ await act(async () => { document.dispatchEvent(new window.KeyboardEvent('keydown
 await act(async () => { await new Promise((r) => setTimeout(r, 240)) })
 
 /* ====================================================================== *
+ * Supabase row mapping: the app speaks camelCase, Postgres speaks snake_case.
+ * These checks pin the mapper to the DDL in DEPLOY.md, so the two cannot drift.
+ * ====================================================================== */
+import { readFileSync } from 'node:fs'
+const RM = m.rowmap
+
+console.log('\n— Row mapping: camelCase app rows <-> snake_case Postgres —')
+
+/** Parse the create-table statements out of DEPLOY.md. */
+function ddlColumns() {
+  const sql = readFileSync('DEPLOY.md', 'utf8')
+  const out = {}
+  for (const t of sql.matchAll(/create table if not exists (\w+) \(([\s\S]*?)\n\);/g)) {
+    const body = t[2].replace(/--[^\n]*/g, '')
+    const parts = []
+    let depth = 0, cur = ''
+    for (const ch of body) {
+      if (ch === '(') depth++
+      if (ch === ')') depth--
+      if (ch === ',' && depth === 0) { parts.push(cur); cur = '' } else cur += ch
+    }
+    parts.push(cur)
+    const cols = parts
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .map((p) => p.split(/\s+/)[0].replace(/"/g, ''))
+      .filter((c) => !['primary', 'unique', 'constraint', 'references'].includes(c.toLowerCase()))
+    out[t[1]] = cols
+  }
+  return out
+}
+
+const DDL = ddlColumns()
+check('the DDL parsed out of DEPLOY.md', Object.keys(DDL).length >= 9, `${Object.keys(DDL).length} tables`)
+
+// Every resource the data layer maps must correspond to a real table.
+for (const [kind, table] of Object.entries({ memberships: 'members', transactions: 'transactions',
+  pledges: 'pledges', budgets: 'budgets', accounts: 'accounts', grants: 'grants',
+  receipts: 'receipts', feeReceipts: 'fee_receipts', vouchers: 'vouchers' })) {
+  const mapped = new Set(RM.columnsFor(kind))
+  const declared = new Set(DDL[table] || [])
+  const missingInCode = [...declared].filter((c) => !mapped.has(c))
+  const missingInDdl = [...mapped].filter((c) => !declared.has(c))
+  check(`${table}: code and DDL agree (${mapped.size} columns)`,
+    missingInCode.length === 0 && missingInDdl.length === 0,
+    [missingInCode.length ? `not mapped: ${missingInCode.join(',')}` : '',
+     missingInDdl.length ? `not in DDL: ${missingInDdl.join(',')}` : ''].filter(Boolean).join(' | ') || 'exact match')
+}
+
+console.log('\n— Round trip: app row -> database row -> app row —')
+const samples = {
+  memberships: m.seed.seedMemberships()[0],
+  transactions: m.seed.seedTransactions()[0],
+  pledges: m.seed.seedPledges()[0],
+  budgets: m.seed.seedBudgets()[0],
+  accounts: m.booksData.seedAccounts()[0],
+  grants: m.booksData.seedGrants()[0],
+  receipts: { id: 'r1', no: 'KSO/80G/2026-27/0001', date: '2026-09-12', voucherId: 'v1', donor: 'A', amount: 500, method: 'UPI', pan: 'AAAAA0000A', address: 'Chd', narration: 'Donation' },
+  feeReceipts: { id: 'f1', createdAt: '2026-09-12T00:00:00Z', no: 'KSO/MEM/2026-27/0001', date: '2026-09-12', kind: 'membership-fee', memberId: 'm1', memberNo: 'KSO-1001', memberName: 'Harpreet Singh', tier: 'Individual', cycle: 'annual', period: '2026-27', amount: 500, method: 'UPI' },
+}
+for (const [kind, row] of Object.entries(samples)) {
+  const db = RM.toRow(kind, row)
+  const back = RM.fromRow(kind, db)
+  const keys = Object.keys(row).filter((k) => k !== 'demo')
+  const lost = keys.filter((k) => back[k] === undefined)
+  const changed = keys.filter((k) => back[k] !== undefined && JSON.stringify(back[k]) !== JSON.stringify(row[k]))
+  check(`${kind}: survives the round trip`, lost.length === 0 && changed.length === 0,
+    [lost.length ? `lost: ${lost.join(',')}` : '', changed.length ? `changed: ${changed.join(',')}` : ''].filter(Boolean).join(' | ') || `${keys.length} fields intact`)
+}
+
+console.log('\n— The specific defects this fixes —')
+check('member: renewsOn becomes renews_on',
+  RM.toRow('memberships', { renewsOn: '2027-01-01' }).renews_on === '2027-01-01')
+check('member: feeAmount becomes fee_amount',
+  RM.toRow('memberships', { feeAmount: 500 }).fee_amount === 500)
+check('member: memberNo becomes member_no',
+  RM.toRow('memberships', { memberNo: 'KSO-1001' }).member_no === 'KSO-1001')
+check('reading back gives camelCase again',
+  RM.fromRow('memberships', { renews_on: '2027-01-01', fee_amount: 500, member_no: 'KSO-1001' }).renewsOn === '2027-01-01')
+check('a local-only key is dropped, not inserted',
+  RM.toRow('memberships', { name: 'X', demo: true }).demo === undefined)
+check('every unsupported key is reported, not just demo',
+  RM.unsupportedKeys('memberships', { name: 'X', demo: true, nonsense: 1 }).length === 2,
+  RM.unsupportedKeys('memberships', { name: 'X', demo: true, nonsense: 1 }).join(','))
+check('a snake_case row re-saves cleanly (idempotent)',
+  JSON.stringify(RM.toRow('memberships', RM.toRow('memberships', { memberNo: 'KSO-1', renewsOn: 'x', demo: true })))
+  === JSON.stringify(RM.toRow('memberships', { memberNo: 'KSO-1', renewsOn: 'x' })))
+check('the budget financial year is a string, not a number',
+  typeof RM.toRow('budgets', { fy: '2026-27', amount: 100 }).fy === 'string')
+check('a transaction keeps its fund', RM.toRow('transactions', { fund: 'Corpus' }).fund === 'Corpus')
+check('a voucher links to its member', RM.toRow('vouchers', { memberId: 'm1' }).member_id === 'm1')
+check('an unknown resource passes through rather than crashing',
+  JSON.stringify(RM.toRow('notAResource', { a: 1 })) === '{"a":1}')
+check('a null row does not throw', RM.toRow('memberships', null) === null)
+
+/* ====================================================================== *
  * Membership revision: member numbers, editable tiers, fee cycles,
  * status reconciliation, dues and fee receipts.
  * ====================================================================== */

@@ -2,7 +2,7 @@
 
 Written so a failed turn costs nothing. **Read this first when resuming.**
 
-Last verified state: **`npm test` → 480 PASS / 0 FAIL**, `npx vite build` ✓ (12 s).
+Last verified state: **`npm test` → 510 PASS / 0 FAIL**, `npx vite build` ✓ (12 s).
 Environment note: `node_modules` is NOT persisted between sessions — run `npm ci` first (≈7 s).
 
 ---
@@ -104,9 +104,59 @@ cannot be checked locally — only after a real deploy.
   80G validity date it never uses.
 - Member profile gained a **Renew** button (it was reachable only from the kebab menu).
 
+## Supabase row mapping (the backend was non-functional)
+
+`src/lib/rowmap.js` is new. The database columns are snake_case (`renews_on`, `fee_amount`);
+the app speaks camelCase. `src/lib/db.js` had **no mapping at all**, so Supabase mode read
+`undefined` for every camelCase field — each member rendered "No date", no number and a ₹0 fee —
+and it inserted camelCase keys as columns that do not exist.
+
+- `ROW_COLUMNS` holds the app-key → column contract for all 9 resources; `toRow` renames **and
+  drops keys with no column** (seeded rows carry `demo`, which would fail the insert);
+  `fromRow` restores camelCase, so everything above the data layer stays backend-agnostic.
+- Wired into all three Supabase call sites: `list` → `fromRows`, `create`/`update` → `toRow`
+  then `fromRow` on the returned row. A snake_case row now re-saves idempotently.
+- The test block parses the DDL straight out of `DEPLOY.md`, so code and schema cannot drift:
+  **9/9 tables exact match** (members 21 cols, transactions 14, pledges 10, budgets 6,
+  accounts 10, grants 11, receipts 10, fee_receipts 13, vouchers 18) and a sample row round-trips
+  per resource. Writing that test found three DDL gaps, now fixed in `DEPLOY.md`:
+  transactions were missing `fund`, vouchers `member_id`, and budgets declared `year int not null`
+  where the app writes `fy text` — so a budget could never have been saved.
+
+## Content coverage audit
+
+`tests/scan-content-coverage.mjs` (in `npm test` as `test:content`) walks every leaf of
+`defaultContent` and every path the admin actually addresses, and fails on anything uncovered or
+dangling. `set(` is only read in files that bind `setContentPath`, otherwise the Ledger and
+Accounting form setters look like content paths.
+
+**102 leaves / 110 addressed paths / 0 uncovered / 0 dangling.** Mutation-proven: redirecting the
+faqs addressing makes it report `faqs[].a`, `faqs[].q` plus 3 dangling paths and exit 1.
+
+## GitHub Pages — file ready, activation blocked
+
+`.github/workflows/deploy-pages.yml` (moved out of `docs/`, YAML validated) builds with
+`BASE_PATH` (default `/KSOCHD` for the project site `…github.io/KSOCHD/`) and deploys `dist`
+with `actions/deploy-pages@v4`. The example's `cp dist/index.html dist/404.html` step was
+**removed, not ported**: it would overwrite `public/404.html`, the deep-link interceptor that
+pairs with the `spa-redirect` restore in `src/main.jsx`, so a shared link would boot on the wrong
+route. The step now asserts `dist/404.html` exists instead. Verified: a `BASE_PATH=/KSOCHD` build
+emits `/KSOCHD/`-prefixed assets and keeps the interceptor.
+
+**Two manual actions are still required:**
+
+1. Push the workflow file with a token that has the **`workflow`** scope.
+2. Repo **Settings → Pages → Source = "GitHub Actions"** (and optionally the variable
+   `BASE_PATH=/KSOCHD`, which the code already defaults to).
+
+The Pages API refused to enable it: `POST /repos/…/pages` → `403 Resource not accessible by
+personal access token`. That is a token-scope limit, not a repo setting that can be worked around
+from here.
+
 ## Not started
 
-Nothing outstanding. Open items are the ones already recorded as blocked or not planned
+Nothing outstanding in code. Two blockers, both listed above and both outside the repo: the
+Pages activation + workflow-scoped push, and the items already recorded as not planned
 (server-side auth for real security, settings from a server, scheduled backups, i18n, multi-currency).
 
 ## Standing constraints
