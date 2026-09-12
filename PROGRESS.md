@@ -189,6 +189,36 @@ the admin panel, no webfont, and P1s from the review (dark-on-dark sub-heading, 
 badges, "Unique donors" counting event and in-kind payers, the chat pill covering the footer's
 80G line, nav labels ellipsised).
 
+## Admin / core functional audit
+
+Full report: `ux-review/ADMIN-FUNCTIONAL-AUDIT.md` (outside this repo). Six findings, all
+executed rather than inferred. The suite is strong on pure functions and accounting maths but
+blind on **whether the panel's own instructions lead anywhere** and on **what happens to related
+records when something is deleted**.
+
+- **F1 (compliance, high).** `nextReceiptNo` counts the rows in the year instead of taking
+  max+1, so deleting a receipt **reissues its number**. Proven by driving the UI: issue 0001 and
+  0002, delete 0001 (one click, no confirmation), re-issue → two donors hold
+  `KSO/80G/2026-27/0002`. The correct implementation is 15 lines below in the same file —
+  `nextFeeReceiptNo` does max+1 and its comment names exactly this hazard.
+- **F2.** The `demoBadge` go-live item is unsatisfiable: it needs `showDemoBadge === false`, and
+  the only writer is `clearDemoData`, which has no caller. 0 of 52 controls in the System tab
+  touch it.
+- **F3.** Two of the 14 checklist `where` pointers name controls that do not exist
+  (`Members → Clear demo data`; `System → Production mode` for the badge). Same class as the
+  Analytics pointer fixed earlier — the checklist's logic is tested, its pointers are not.
+- **F4.** Deleting a grant orphans its vouchers: `removeRow` cascades only transactions.
+  Deleting one seeded grant left 9 of 59 vouchers pointing at nothing; the money stays in the
+  books but can never be attributed to a grant again (a re-created grant gets a new id).
+- **F5.** Dead store surface: `clearDemoData`, `setRows`, `updateAdminUser` have no callers.
+- **F6 (security).** `toCSV` escapes quotes and commas but not a leading `=`, so a hostile name
+  from a public form reaches an admin's Excel through the exported audit trail.
+
+Sound and worth recording: backup/restore round-trips all 14 collections byte-identically and
+`importAll` type-checks every collection; transaction→voucher add/edit/delete wiring is correct
+including the cascade; every action the UI calls exists; the audit trail has a viewer; the Inbox
+clear is honestly labelled.
+
 ## Not started
 
 Nothing outstanding in code. Two blockers, both listed above and both outside the repo: the
