@@ -41,8 +41,11 @@ export default function Volunteer() {
     addSubmission({ kind: 'volunteer', name: form.name, email: form.email, phone: form.phone, message: `Roles: ${form.roles.join(', ')} | Availability: ${form.avail.join(', ')} | City: ${form.city} | ${form.about}` })
     // Create a pending membership record so the application lands in the
     // Membership system, not just the inbox.
+    //
+    // No memberNo here on purpose: the store assigns the next number in sequence
+    // (this used to mint a random KSO-####, which collided with the roster and
+    // left gaps in a series the office reads out over the phone).
     addMembership('memberships', {
-      memberNo: `KSO-${String(Math.floor(Math.random() * 9000) + 1000)}`,
       name: form.name,
       email: form.email,
       phone: form.phone,

@@ -1,12 +1,13 @@
 import { format, parseISO } from 'date-fns'
-import { Search, Filter, Plus, Users, MoreHorizontal, Pencil, Trash2, UserPlus, IdCard, UserCheck, UserX, RefreshCw } from 'lucide-react'
+import { Search, Filter, Plus, Users, MoreHorizontal, Pencil, Trash2, UserPlus, IdCard, UserCheck, UserX, RefreshCw, AlertTriangle } from 'lucide-react'
 import {
   Card, Button, Input, Badge, Avatar, AvatarFallback, SelectField, TabsContent,
   EmptyState, Skeleton, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, Progress,
 } from '../../../components/admin/ui'
-import { MEMBER_TYPES, MEMBER_STATUSES, MEMBER_TIERS } from '../../../data/seedData'
+import { MEMBER_TYPES, MEMBER_STATUSES } from '../../../data/seedData'
 import { renewalState, money } from '../../../lib/finance'
+import { effectiveStatus, tierNames } from '../../../lib/membership'
 import { formatDate, initials, cn } from '../../../lib/utils'
 
 /**
@@ -18,7 +19,11 @@ export default function DirectoryPanel({
   q, onQuery, typeFilter, onTypeFilter, statusFilter, onStatusFilter,
   tierFilter, onTierFilter, sort, onSort, onResetFilters,
   onEdit, onOpen, onDelete, onSetStatus, onAdd, onRenew,
+  duesByMember = new Map(), settings,
 }) {
+  // Tiers are editable in Tiers & fees, so the filter follows settings rather
+  // than a fixed constant — a new tier is filterable the moment it is added.
+  const tiers = tierNames(settings)
   return (
         <TabsContent value="directory">
           <Card>
@@ -35,7 +40,7 @@ export default function DirectoryPanel({
                 <SelectField value={statusFilter} onChange={onStatusFilter} options={[{ value: 'all', label: 'All statuses' }, ...MEMBER_STATUSES]} />
               </div>
               <div className="w-[150px]">
-                <SelectField value={tierFilter} onChange={onTierFilter} options={[{ value: 'all', label: 'All tiers' }, ...MEMBER_TIERS]} />
+                <SelectField value={tierFilter} onChange={onTierFilter} options={[{ value: 'all', label: 'All tiers' }, ...tiers]} />
               </div>
               <div className="w-[150px]">
                 <SelectField value={sort} onChange={onSort} options={[
@@ -63,7 +68,7 @@ export default function DirectoryPanel({
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[900px] text-sm">
+                <table className="w-full min-w-[1000px] text-sm">
                   <thead>
                     <tr className="border-b border-ink-900/8 text-left text-[11px] uppercase tracking-wide text-ink-500">
                       <th className="px-4 py-2.5 font-bold">Member</th>
@@ -72,6 +77,7 @@ export default function DirectoryPanel({
                       <th className="px-3 py-2.5 font-bold">Joined</th>
                       <th className="px-3 py-2.5 font-bold">Renewal</th>
                       <th className="px-3 py-2.5 text-right font-bold">Contributed</th>
+                      <th className="px-3 py-2.5 font-bold">Dues</th>
                       <th className="px-3 py-2.5 font-bold">Status</th>
                       <th className="w-10 px-3 py-2.5" />
                     </tr>
@@ -80,6 +86,8 @@ export default function DirectoryPanel({
                     {filtered.map((m) => {
                       const r = renewalState(m)
                       const given = totals.get(m.id)?.given || 0
+                      const eff = effectiveStatus(m)
+                      const d = duesByMember.get(m.id)
                       return (
                         <tr key={m.id} className="transition hover:bg-ink-900/[0.02]">
                           <td className="px-4 py-3">
@@ -111,6 +119,22 @@ export default function DirectoryPanel({
                             {given ? <span className="text-brand-700">{money(given)}</span> : <span className="text-ink-500">—</span>}
                           </td>
                           <td className="px-3 py-3">
+                            {d && d.status === 'n/a' ? (
+                              <span className="text-xs text-ink-500">No fee</span>
+                            ) : d && d.due === 0 ? (
+                              <Badge tone="green">Paid</Badge>
+                            ) : d ? (
+                              <span>
+                                <Badge tone={d.status === 'partial' ? 'amber' : 'red'}>
+                                  {d.status === 'partial' ? 'Part' : 'Due'}
+                                </Badge>
+                                <span className="mt-1 block text-[11px] font-semibold text-ink-600">{money(d.due)}</span>
+                              </span>
+                            ) : (
+                              <span className="text-ink-500">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3">
                             <select
                               value={m.status}
                               onChange={(e) => onSetStatus(m, e.target.value)}
@@ -124,6 +148,16 @@ export default function DirectoryPanel({
                             >
                               {MEMBER_STATUSES.map((s) => <option key={s}>{s}</option>)}
                             </select>
+                            {/* Stored status and renewal date disagree — surfaced, not silently
+                                rewritten, so the admin can see why the KPIs say otherwise. */}
+                            {eff.changed && (
+                              <span
+                                className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-amber-700"
+                                title={`Renewal date says ${eff.status}`}
+                              >
+                                <AlertTriangle className="h-3 w-3" /> shows as {eff.status}
+                              </span>
+                            )}
                           </td>
                           <td className="px-3 py-3">
                             <DropdownMenu>

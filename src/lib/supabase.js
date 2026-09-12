@@ -23,4 +23,6 @@ export const TABLES = {
   vouchers: 'vouchers',
   grants: 'grants',
   receipts: 'receipts',
+  // Membership fee receipts are a separate book from 80G donation receipts.
+  feeReceipts: 'fee_receipts',
 }

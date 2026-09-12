@@ -118,6 +118,25 @@ create table if not exists receipts (
   donor text, amount numeric default 0, method text, pan text, address text, narration text
 );
 
+-- Membership fee receipts. A SEPARATE book from the 80G donations above: a
+-- membership fee is not a donation, it runs in its own KSO/MEM numbering series,
+-- and mixing the two would corrupt the 80G sequence (nextReceiptNo counts every
+-- receipt whose number contains the financial year).
+create table if not exists fee_receipts (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz default now(),
+  no text not null unique,          -- KSO/MEM/2026-27/0001 — never reissued
+  date date not null,
+  kind text default 'membership-fee',
+  member_id uuid references members(id) on delete set null,
+  member_no text, member_name text,
+  tier text, cycle text, period text,
+  amount numeric default 0, method text
+);
+
+create index if not exists fee_receipts_member_idx on fee_receipts (member_id);
+create index if not exists fee_receipts_date_idx   on fee_receipts (date desc);
+
 create table if not exists transactions (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz default now(),
@@ -149,6 +168,7 @@ alter table members      enable row level security;
 alter table transactions enable row level security;
 alter table pledges      enable row level security;
 alter table budgets      enable row level security;
+alter table fee_receipts enable row level security;
 
 -- Service-role / trusted-client access. Replace with a policy tied to your admin
 -- auth (e.g. auth.uid() in (select id from admins)) once you add real sign-in.
@@ -156,6 +176,7 @@ create policy "admin all" on members      for all using (true) with check (true)
 create policy "admin all" on transactions for all using (true) with check (true);
 create policy "admin all" on pledges      for all using (true) with check (true);
 create policy "admin all" on budgets      for all using (true) with check (true);
+create policy "admin all" on fee_receipts for all using (true) with check (true);
 ```
 
 > Keep the anon key out of any public repository, and remember the anon key is readable in the

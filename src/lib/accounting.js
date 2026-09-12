@@ -479,6 +479,25 @@ export const nextReceiptNo = (receipts, date) => {
   return `KSO/80G/${fy}/${String(used + 1).padStart(4, '0')}`
 }
 
+/**
+ * Membership fee receipts run in their own series.
+ *
+ * They must NOT share the 80G series: a membership fee is not a donation and
+ * carries no deduction under section 80G, so numbering it as one would misstate
+ * the organisation's receipts. The next number is taken from the highest
+ * sequence already issued, so deleting a receipt cannot cause a number to be
+ * handed out twice.
+ */
+export const nextFeeReceiptNo = (receipts, date) => {
+  const fy = fyLabel(date)
+  const issued = (receipts || [])
+    .map((r) => String(r?.no || '').match(/^KSO\/MEM\/\d{4}-\d{2}\/(\d+)$/))
+    .filter(Boolean)
+    .map((m) => Number(m[1]))
+  const next = (issued.length ? Math.max(...issued) : 0) + 1
+  return `KSO/MEM/${fy}/${String(next).padStart(4, '0')}`
+}
+
 /** Donations without a receipt yet — the queue the 80G register works from. */
 export const unreceiptedDonations = (vouchers, receipts) => {
   const issued = new Set(receipts.map((r) => r.voucherId).filter(Boolean))

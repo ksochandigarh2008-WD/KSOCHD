@@ -39,13 +39,23 @@ export const DEFAULT_COMPLIANCE = {
 
 export const complianceOf = (settings) => ({ ...DEFAULT_COMPLIANCE, ...(settings?.compliance || {}) })
 
-/** Statutory fields that are still blank, in the order they appear on the form. */
-export const missingCompliance = (compliance, org = {}) => {
+/**
+ * Statutory fields that are still blank, in the order they appear on the form.
+ *
+ * `require80G` is false for documents that make no 80G claim — a membership fee
+ * receipt is not a donation, so flagging a missing 80G validity date on it would
+ * be noise, not diligence.
+ */
+export const missingCompliance = (compliance, org = {}, { require80G = true } = {}) => {
   const c = complianceOf({ compliance })
   return [
     ['pan', 'PAN of the organisation', c.pan],
-    ['g80No', '80G registration number', c.g80No],
-    ['g80ValidUpto', '80G validity (up to)', c.g80ValidUpto],
+    ...(require80G
+      ? [
+        ['g80No', '80G registration number', c.g80No],
+        ['g80ValidUpto', '80G validity (up to)', c.g80ValidUpto],
+      ]
+      : []),
     ['signatoryName', 'Name of the signatory', c.signatoryName],
     ['signatoryDesignation', 'Designation of the signatory', c.signatoryDesignation],
     ['regdNo', 'Registration number', c.regdNo || org?.registration],
@@ -140,6 +150,128 @@ export const methodPhrase = (method = '') => {
 
 export const receiptSum = (m) =>
   `the sum of ${m.amountWords}${m.method ? `, received by ${methodPhrase(m.method)}` : ''}.`
+
+/* -------------------------------------------------------------------------- *
+ * 1b. Membership fee receipt
+ *
+ * Deliberately NOT an 80G receipt. A membership fee buys membership; it is not
+ * a donation, so no deduction arises under section 80G and the document must
+ * not imply one. It runs in its own KSO/MEM series for the same reason, and
+ * says so in plain words on the face of the receipt.
+ * -------------------------------------------------------------------------- */
+
+export function buildFeeReceipt({ receipt = {}, settings, org = {}, member = null }) {
+  const c = complianceOf(settings)
+  const amount = Number(receipt.amount) || 0
+  const owner = member || {}
+  const memberName = receipt.member || owner.name || 'Member'
+  const memberNo = receipt.memberNo || owner.memberNo || ''
+
+  const period = String(receipt.period || '').trim()
+
+  return {
+    no: receipt.no || '',
+    date: fmtDate(receipt.date),
+    place: c.place || org.city || '',
+    member: memberName,
+    memberNo,
+    tier: receipt.tier || owner.tier || '',
+    cycle: receipt.cycle || owner.feeCycle || '',
+    period,
+    amount,
+    amountWords: amountInWords(amount),
+    method: receipt.method || '',
+
+    // "Membership fee for the year 2026-27" — the phrase the member will look for.
+    narration: [
+      'Membership fee',
+      receipt.tier || owner.tier ? `(${receipt.tier || owner.tier} membership)` : '',
+      period ? `for ${period}` : '',
+      memberNo ? `— member no. ${memberNo}` : '',
+    ].filter(Boolean).join(' ').replace(/\s+—/, ' —'),
+
+    // The one thing this document must never be mistaken for.
+    notADonation:
+      'This is a membership fee, not a donation. No deduction is admissible under section 80G ' +
+      'of the Income-tax Act, 1961 in respect of this receipt.',
+
+    orgName: org.fullName || org.shortName || '',
+    orgRegd: c.regdNo || org.registration || '',
+    orgAddress: c.address || org.address || '',
+    orgPan: c.pan || '',
+    g80No: c.g80No || '',
+    g80Validity: '',
+    signatoryName: c.signatoryName || '',
+    signatoryDesignation: c.signatoryDesignation || '',
+
+    missing: missingCompliance(c, org, { require80G: false }),
+    filename: `${String(receipt.no || 'fee-receipt').replace(/\//g, '-')}.pdf`,
+  }
+}
+
+/** Draw the membership fee receipt onto a jsPDF document (A4 portrait, mm). */
+export function renderFeeReceipt(doc, m) {
+  let y = header(doc, m)
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(13)
+  doc.text('MEMBERSHIP FEE RECEIPT', M, y)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9.5)
+  doc.text(`No. ${m.no || '—'}`, RIGHT, y - 4, { align: 'right' })
+  doc.text(`Date: ${m.date || '—'}`, RIGHT, y, { align: 'right' })
+
+  y += 8
+  const boxTop = y
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10.5)
+
+  const body =
+    `Received with thanks from ${m.member}${m.memberNo ? ` (${m.memberNo})` : ''}` +
+    `${m.tier ? `, being the ${m.tier} membership fee` : ', being the membership fee'}` +
+    `${m.period ? ` for ${m.period}` : ''}.`
+  for (const line of doc.splitTextToSize(body, WIDTH - 8)) {
+    doc.text(line, M + 4, y + 5); y += 5
+  }
+  y += 2
+  for (const line of doc.splitTextToSize(receiptSum({ ...m, amountWords: m.amountWords }), WIDTH - 8)) {
+    doc.text(line, M + 4, y + 5); y += 5
+  }
+  y += 4
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(15)
+  doc.text(`Rs. ${plainMoney(m.amount)}`, M + 4, y + 6)
+  y += 16
+  doc.setLineWidth(0.2)
+  doc.rect(M, boxTop, WIDTH, y - boxTop)
+
+  y += 12
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(9.5)
+  for (const line of doc.splitTextToSize(m.notADonation, WIDTH)) {
+    doc.text(line, M, y); y += 4.6
+  }
+
+  y += 4
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8.5)
+  for (const line of doc.splitTextToSize(
+    'This receipt is valid only when signed, and is generated from the books of account of the ' +
+    'organisation. Please quote the receipt number in any correspondence.',
+    WIDTH,
+  )) {
+    doc.text(line, M, y); y += 4.2
+  }
+
+  signatureBlock(doc, m)
+  footer(doc, 'Computer-generated receipt — membership fee, not a donation.')
+  return doc
+}
+
+export const downloadFeeReceipt = async (model) => {
+  const doc = renderFeeReceipt(await newDoc(), model)
+  doc.save(model.filename)
+}
 
 /* -------------------------------------------------------------------------- *
  * 2. Utilisation certificate (GFR 19-A)

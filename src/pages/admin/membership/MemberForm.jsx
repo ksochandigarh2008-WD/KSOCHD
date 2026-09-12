@@ -5,15 +5,26 @@ import { Loader2, Plus, Trash2 } from 'lucide-react'
 import {
   Button, Input, Textarea, Label, FieldError, Dialog, DialogContent, DialogFooter, SelectField,
 } from '../../../components/admin/ui'
+import { useMemo } from 'react'
 import { useCreateMember, useUpdateMember } from '../hooks'
 import { memberSchema } from '../schemas'
-import { MEMBER_TYPES, MEMBER_TIERS, MEMBER_STATUSES, FEE_CYCLES, CENTRES, TIER_FEES, HOUSEHOLD_RELATIONS } from '../../../data/seedData'
+import { MEMBER_TYPES, MEMBER_STATUSES, FEE_CYCLES, CENTRES, HOUSEHOLD_RELATIONS } from '../../../data/seedData'
+import { useSite } from '../../../store/useSite'
+import { isRenewable, nextMemberNo, tierFee, tierOptions } from '../../../lib/membership'
 
 /** Add or edit a membership record, including the household carried on a Family tier. */
 export default function MemberForm({ open, onOpenChange, member, onSaved }) {
   const create = useCreateMember()
   const update = useUpdateMember()
   const isEdit = Boolean(member)
+
+  // Tiers are settings-backed (Admin → Membership → Tiers & fees) so an admin can
+  // rename or reprice one without a code change.
+  const settings = useSite((s) => s.settings)
+  const memberships = useSite((s) => s.memberships || [])
+  const tiers = useMemo(() => tierOptions(settings), [settings])
+  /** The number this member will actually be given — shown, not guessed at. */
+  const pendingNo = useMemo(() => nextMemberNo(memberships), [memberships])
 
   const {
     register, handleSubmit, control, watch, setValue, formState: { errors, isSubmitting },
@@ -22,10 +33,11 @@ export default function MemberForm({ open, onOpenChange, member, onSaved }) {
     defaultValues: member
       ? { ...member, household: member.household || [] }
       : {
-        name: '', email: '', phone: '', type: 'Volunteer', tier: 'Individual', status: 'Active',
+        name: '', email: '', phone: '', type: 'Volunteer',
+        tier: tiers[0]?.value || '', status: 'Active',
         centre: CENTRES[0], joined: new Date().toISOString().slice(0, 10), renewsOn: '',
         skills: '', city: '', address: '', notes: '', avatar: '', household: [],
-        feeAmount: TIER_FEES.Individual, feeCycle: 'annual', eventsAttended: 0,
+        feeAmount: tierFee(settings, tiers[0]?.value), feeCycle: 'annual', eventsAttended: 0,
       },
   })
 
@@ -34,10 +46,9 @@ export default function MemberForm({ open, onOpenChange, member, onSaved }) {
   const tier = watch('tier')
   const feeCycle = watch('feeCycle')
 
-  // Keep the fee in step with the tier unless someone typed a custom number
-  const applyTierFee = (t) => {
-    if (TIER_FEES[t] != null) setValue('feeAmount', TIER_FEES[t])
-  }
+  // Keep the fee in step with the tier. A tier priced at ₹0 (an honorary tier)
+  // sets 0, which is correct and visible, rather than leaving a stale fee behind.
+  const applyTierFee = (t) => setValue('feeAmount', tierFee(settings, t))
 
   const submit = async (values) => {
     try {
@@ -46,7 +57,10 @@ export default function MemberForm({ open, onOpenChange, member, onSaved }) {
         household: values.tier === 'Family'
           ? (values.household || []).filter((h) => h && String(h.name || '').trim())
           : [],
-        memberNo: member?.memberNo || `KSO-${String(Math.floor(Math.random() * 9000) + 1000)}`,
+        // New members get no number here on purpose: src/lib/db.js assigns the
+        // next one in sequence for every backend, which is what makes duplicates
+        // impossible. Editing keeps the number the member already has.
+        ...(member?.memberNo ? { memberNo: member.memberNo } : {}),
       }
       if (isEdit) await update.mutateAsync({ id: member.id, patch: payload })
       else await create.mutateAsync(payload)
@@ -74,7 +88,10 @@ export default function MemberForm({ open, onOpenChange, member, onSaved }) {
             </div>
             <div>
               <Label>Membership no.</Label>
-              <Input value={member?.memberNo || 'Auto-generated'} disabled />
+              <Input value={member?.memberNo || pendingNo} disabled />
+              <p className="mt-1 text-xs text-ink-500">
+                {member?.memberNo ? 'Issued when the member was added.' : 'Assigned on save, in sequence.'}
+              </p>
             </div>
             <div>
               <Label>Email</Label>
@@ -99,7 +116,7 @@ export default function MemberForm({ open, onOpenChange, member, onSaved }) {
                 <SelectField
                   label="Tier" value={field.value}
                   onChange={(v) => { field.onChange(v); applyTierFee(v) }}
-                  options={MEMBER_TIERS.map((t) => ({ value: t, label: `${t} — ₹${TIER_FEES[t]?.toLocaleString('en-IN') || 0}/yr` }))}
+                  options={tiers}
                   error={fieldState.error?.message}
                 />
               )}
@@ -128,10 +145,17 @@ export default function MemberForm({ open, onOpenChange, member, onSaved }) {
               <Input type="number" {...register('feeAmount')} invalid={Boolean(errors.feeAmount)} />
               <FieldError>{errors.feeAmount?.message}</FieldError>
             </div>
-            <Controller
-              control={control} name="feeCycle"
-              render={({ field }) => <SelectField label="Fee cycle" value={field.value} onChange={field.onChange} options={FEE_CYCLES} />}
-            />
+            <div>
+              <Controller
+                control={control} name="feeCycle"
+                render={({ field }) => <SelectField label="Fee cycle" value={field.value} onChange={field.onChange} options={FEE_CYCLES} />}
+              />
+              <p className="mt-1 text-xs text-ink-500">
+                {isRenewable(feeCycle)
+                  ? 'Renewals roll this forward, and can record the fee.'
+                  : 'One-time and no-fee memberships are never renewed or charged again.'}
+              </p>
+            </div>
             <div>
               <Label>City</Label>
               <Input {...register('city')} placeholder="Chandigarh" />

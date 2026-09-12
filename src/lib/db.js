@@ -16,6 +16,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { supabase, isSupabase, TABLES } from './supabase'
 import { api, isApiMode } from '../api/client'
 import { useSite } from '../store/useSite'
+import { ensureMemberNo } from './membership'
 
 const LATENCY = 90
 const wait = (ms = LATENCY) => new Promise((r) => setTimeout(r, ms))
@@ -31,9 +32,24 @@ const unwrap = ({ data, error }) => {
 const restFor = {
   memberships: 'members', transactions: 'transactions', pledges: 'pledges', budgets: 'budgets',
   accounts: 'accounts', vouchers: 'vouchers', grants: 'grants', receipts: 'receipts',
+  feeReceipts: 'feeReceipts',
 }
 
-function makeResource(kind, table) {
+/**
+ * Assign a membership number before the row leaves the client, so the guarantee
+ * holds on every backend. This is the only place all three paths pass through:
+ * Supabase inserts, REST calls and the local store all originate here. Numbers
+ * are derived from the records already present, never drawn at random.
+ */
+const withMemberNo = (row) => {
+  if (String(row?.memberNo ?? '').trim()) {
+    const taken = (store().memberships || []).map((m) => String(m?.memberNo ?? '').trim())
+    if (!taken.includes(String(row.memberNo).trim())) return row
+  }
+  return { ...row, memberNo: ensureMemberNo(store().memberships, row?.memberNo) }
+}
+
+function makeResource(kind, table, { prepare } = {}) {
   const rest = api[restFor[kind]]
   return {
     async list() {
@@ -53,7 +69,8 @@ function makeResource(kind, table) {
     },
 
     async create(row) {
-      const record = { id: uuidv4(), created_at: new Date().toISOString(), ...row }
+      const base = { id: uuidv4(), created_at: new Date().toISOString(), ...row }
+      const record = prepare ? prepare(base) : base
       if (isSupabase) {
         const { data, error } = await supabase.from(table).insert(record).select().single()
         return unwrap({ data, error })
@@ -99,7 +116,7 @@ function makeResource(kind, table) {
 }
 
 export const db = {
-  members: makeResource('memberships', TABLES.members),
+  members: makeResource('memberships', TABLES.members, { prepare: withMemberNo }),
   transactions: makeResource('transactions', TABLES.transactions),
   pledges: makeResource('pledges', TABLES.pledges),
   budgets: makeResource('budgets', TABLES.budgets),
@@ -108,6 +125,7 @@ export const db = {
   vouchers: makeResource('vouchers', TABLES.vouchers),
   grants: makeResource('grants', TABLES.grants),
   receipts: makeResource('receipts', TABLES.receipts),
+  feeReceipts: makeResource('feeReceipts', TABLES.feeReceipts),
 }
 
 /** React Query keys — one place so invalidation stays consistent. */
@@ -120,6 +138,7 @@ export const qk = {
   vouchers: ['vouchers'],
   grants: ['grants'],
   receipts: ['receipts'],
+  feeReceipts: ['feeReceipts'],
 }
 
 export { isSupabase, isApiMode }

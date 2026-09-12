@@ -37,5 +37,12 @@ export function mount(container) {
 }
 export { useSite }
 export { db }
+// React Query caches a snapshot of the store, so a test that writes to the store
+// directly must invalidate — exactly as the app's own mutations do — or the UI
+// keeps rendering stale rows.
+export const queryClient = qc
 export { seedData as seed }
 export { formatCurrency } from '../src/lib/utils'
+export * as membership from '../src/lib/membership'
+export * as docs from '../src/lib/documents'
+export * as accounting from '../src/lib/accounting'

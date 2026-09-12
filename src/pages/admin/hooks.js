@@ -158,3 +158,15 @@ export const useDeleteReceipt = () => {
   const qc = useQueryClient()
   return useMutation({ mutationFn: db.receipts.remove, onSuccess: () => invalidate(qc, [qk.receipts]) })
 }
+
+/* --------------------- membership fee receipts (own book) ---------------- */
+export const useFeeReceipts = () =>
+  useQuery({ queryKey: qk.feeReceipts, queryFn: db.feeReceipts.list, staleTime: 30_000 })
+export const useCreateFeeReceipt = () => {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: db.feeReceipts.create, onSuccess: () => invalidate(qc, [qk.feeReceipts]) })
+}
+export const useDeleteFeeReceipt = () => {
+  const qc = useQueryClient()
+  return useMutation({ mutationFn: db.feeReceipts.remove, onSuccess: () => invalidate(qc, [qk.feeReceipts]) })
+}

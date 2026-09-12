@@ -1,11 +1,20 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import { toast } from 'sonner'
-import { format, parseISO, addYears, addMonths } from 'date-fns'
-import { Users, UserPlus, Download, Trash2, UserCheck, CalendarClock, Wallet, TrendingUp, IdCard } from 'lucide-react'
+import { format, parseISO } from 'date-fns'
+import { Users, UserPlus, Download, Trash2, UserCheck, CalendarClock, Wallet, TrendingUp, IdCard, AlertTriangle, ReceiptText } from 'lucide-react'
 import { Button, StatCard, Tabs, TabsList, TabsTrigger, ConfirmDialog } from '../../../components/admin/ui'
 import { useQueryClient } from '@tanstack/react-query'
-import { useMembers, useUpdateMember, useDeleteMember, useTransactions, useCreateTransaction } from '../hooks'
-import { memberTotals, renewalState, membershipGrowth, money, toCSV } from '../../../lib/finance'
+import {
+  useMembers, useUpdateMember, useDeleteMember, useTransactions, useCreateTransaction,
+  useFeeReceipts, useCreateFeeReceipt,
+} from '../hooks'
+import { memberTotals, renewalState, membershipGrowth, money, toCSV, fyLabelOf } from '../../../lib/finance'
+import {
+  MEMBERSHIP_FEE_CATEGORY, cycleLabel, duesSummary, effectiveStatus, isRenewable,
+  membershipDues, nextRenewalDate, reconcileStatuses,
+} from '../../../lib/membership'
+import { nextFeeReceiptNo } from '../../../lib/accounting'
+import { buildFeeReceipt, downloadFeeReceipt as downloadFeeReceiptPdf } from '../../../lib/documents'
 import { downloadFile } from '../../../lib/utils'
 import { useSite } from '../../../store/useSite'
 import { isSupabase } from '../../../lib/supabase'
@@ -30,9 +39,14 @@ export default function MembershipTab() {
   const updateMember = useUpdateMember()
   const deleteMember = useDeleteMember()
   const createTransaction = useCreateTransaction()
+  const { data: feeReceipts = [] } = useFeeReceipts()
+  const createFeeReceipt = useCreateFeeReceipt()
   const qc = useQueryClient()
   const clearDemoRows = useSite((s) => s.clearDemoRows)
   const resetDemoRows = useSite((s) => s.resetDemoRows)
+  const settings = useSite((s) => s.settings)
+  const content = useSite((s) => s.content)
+  const reconcileMemberStatuses = useSite((s) => s.reconcileMemberStatuses)
   const hasDemo = members.some((m) => m.demo)
 
   const [formOpen, setFormOpen] = useState(false)
@@ -44,18 +58,26 @@ export default function MembershipTab() {
 
   const { filtered, resetFilters, hasFilters, filters, setters } = useMemberFilters(members, totals)
 
+  /** Dues for the financial year in progress: expected, collected, outstanding. */
+  const dues = useMemo(() => membershipDues(members, transactions, settings), [members, transactions, settings])
+  const duesByMember = useMemo(() => new Map(dues.map((d) => [d.id, d])), [dues])
+  const arrears = useMemo(() => duesSummary(dues), [dues])
+
+  /** Members whose stored status disagrees with their renewal date. */
+  const stale = useMemo(() => reconcileStatuses(members), [members])
+
   const stats = useMemo(() => {
-    const now = new Date()
-    const renewal = members.filter((m) => ['amber', 'red'].includes(renewalState(m).tone)).length
     const joinedThisYear = members.filter((m) => m.joined && String(m.joined).startsWith(String(currentYear()))).length
     const feeIncome = transactions
-      .filter((t) => t.type === 'income' && t.category === 'Membership fee')
+      .filter((t) => t.type === 'income' && t.category === MEMBERSHIP_FEE_CATEGORY)
       .reduce((a, t) => a + Number(t.amount || 0), 0)
     return {
       total: members.length,
-      active: members.filter((m) => m.status === 'Active').length,
+      // Counted from the renewal date, not the stored status, so the headline
+      // figure cannot be inflated by a status nobody has updated.
+      active: members.filter((m) => effectiveStatus(m).status === 'Active').length,
       pending: members.filter((m) => m.status === 'Pending').length,
-      renewal,
+      renewal: members.filter((m) => ['amber', 'red'].includes(renewalState(m).tone)).length,
       joinedThisYear,
       feeIncome,
     }
@@ -82,33 +104,82 @@ export default function MembershipTab() {
     toast.success(`Exported ${rows.length} members`)
   }
 
+  /**
+   * Renew one membership.
+   *
+   * The policy lives in lib/membership.js so every caller agrees: monthly and
+   * annual roll forward and can record the fee, while one-time and no-fee
+   * memberships are refused rather than quietly charged again (they used to be
+   * treated as annual, which is how a life member ends up billed every year).
+   */
   const renew = async (m, recordFee = true) => {
-    const cycle = m.feeCycle === 'monthly' ? 'monthly' : 'annual'
-    const base = m.renewsOn && new Date(m.renewsOn) > new Date() ? new Date(m.renewsOn) : new Date()
-    const nextRenewal = (cycle === 'monthly' ? addMonths(base, 1) : addYears(base, 1)).toISOString().slice(0, 10)
+    if (!isRenewable(m.feeCycle)) {
+      toast.error(`${m.name} is on a ${cycleLabel(m.feeCycle)}. Set a renewable fee cycle first — nothing was charged.`)
+      return
+    }
+
+    const nextRenewal = nextRenewalDate(m)
+    const today = new Date().toISOString().slice(0, 10)
+    const fee = Number(m.feeAmount) > 0 ? Number(m.feeAmount) : 0
+
     try {
-      // Money first. If the fee write fails, nothing has changed — rather that
-      // than a member marked renewed with the fee never reaching the books.
-      if (recordFee && Number(m.feeAmount) > 0) {
+      // Money first. If the fee write fails, nothing has changed — rather than a
+      // member marked renewed with the fee never reaching the books.
+      if (recordFee && fee > 0) {
         await createTransaction.mutateAsync({
-          date: new Date().toISOString().slice(0, 10),
+          date: today,
           type: 'income',
-          category: 'Membership fee',
-          amount: Number(m.feeAmount),
+          category: MEMBERSHIP_FEE_CATEGORY,
+          amount: fee,
           program: '',
           party: m.name,
           method: 'UPI',
           reference: `RENEW-${m.memberNo}`,
           status: 'Cleared',
-          note: `${m.tier} renewal — ${cycle}`,
+          note: `${m.tier} renewal — ${m.feeCycle}`,
           memberId: m.id,
         })
       }
       await updateMember.mutateAsync({ id: m.id, patch: { renewsOn: nextRenewal, status: 'Active' } })
-      toast.success(`${m.name} renewed until ${format(parseISO(nextRenewal), 'dd MMM yyyy')}`)
+
+      // A numbered receipt for the fee, in its own series. Issued last and
+      // allowed to fail without failing the renewal: the money and the date are
+      // the substance, the paperwork can be reissued.
+      if (recordFee && fee > 0) {
+        try {
+          const no = nextFeeReceiptNo(feeReceipts, today)
+          await createFeeReceipt.mutateAsync({
+            no, date: today, kind: 'membership-fee',
+            memberId: m.id, memberName: m.name, memberNo: m.memberNo,
+            tier: m.tier, cycle: m.feeCycle, period: fyLabelOf(today),
+            amount: fee, method: 'UPI',
+          })
+          toast.success(`${m.name} renewed to ${format(parseISO(nextRenewal), 'dd MMM yyyy')} · receipt ${no}`)
+        } catch (e) {
+          toast.warning(`${m.name} renewed, but the receipt could not be issued: ${e.message}`)
+        }
+      } else {
+        toast.success(`${m.name} renewed to ${format(parseISO(nextRenewal), 'dd MMM yyyy')} (no fee recorded)`)
+      }
       setDetail(null)
     } catch (e) {
       toast.error(`Renewal failed: ${e.message}`)
+    }
+  }
+
+  /** Apply every status the renewal dates disagree with, in one reviewed step. */
+  const reconcile = () => {
+    const changed = reconcileMemberStatuses()
+    if (changed) toast.success(`${changed} membership status${changed === 1 ? '' : 'es'} brought in line`)
+    else toast('Every status already matches its renewal date')
+  }
+
+  const downloadFeeReceipt = async (receipt, member) => {
+    try {
+      const model = buildFeeReceipt({ receipt, settings, org: content.org, member })
+      await downloadFeeReceiptPdf(model)
+    } catch (e) {
+      toast.error(`Could not build the receipt: ${e.message}`)
     }
   }
 
@@ -163,6 +234,11 @@ export default function MembershipTab() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {stale.length > 0 && (
+            <Button variant="outline" onClick={reconcile}>
+              <AlertTriangle className="h-4 w-4" /> Reconcile {stale.length} status{stale.length === 1 ? '' : 'es'}
+            </Button>
+          )}
           {hasDemo && (
             <Button variant="ghost" onClick={() => { clearDemoRows(); qc.invalidateQueries(); toast.success('Demo members removed') }}>
               <Trash2 className="h-4 w-4" /> Remove demo rows
@@ -178,11 +254,16 @@ export default function MembershipTab() {
       </div>
 
       {/* KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard label="Total members" value={stats.total} icon={Users} hint={`${stats.joinedThisYear} joined this year`} />
         <StatCard label="Active" value={stats.active} icon={UserCheck} tone="green" hint={`${stats.pending} awaiting approval`} />
         <StatCard label="Renewal due" value={stats.renewal} icon={CalendarClock} tone="amber" hint="Expired or due within 30 days" />
         <StatCard label="Fee income" value={money(stats.feeIncome)} icon={Wallet} tone="accent" hint="Membership fees received" />
+        <StatCard
+          label="Arrears" value={money(arrears.outstanding)} icon={ReceiptText}
+          tone={arrears.outstanding > 0 ? 'amber' : 'green'}
+          hint={`${arrears.unpaidCount} owing · ${money(arrears.collected)} collected this FY`}
+        />
       </div>
 
       <Tabs defaultValue="directory">
@@ -194,6 +275,7 @@ export default function MembershipTab() {
 
         <DirectoryPanel
           members={members} filtered={filtered} isLoading={isLoading} totals={totals} hasFilters={hasFilters}
+          duesByMember={duesByMember} settings={settings}
           q={filters.q} onQuery={setters.setQ}
           typeFilter={filters.typeFilter} onTypeFilter={setters.setTypeFilter}
           statusFilter={filters.statusFilter} onStatusFilter={setters.setStatusFilter}
@@ -219,6 +301,10 @@ export default function MembershipTab() {
         open={Boolean(detail)}
         onOpenChange={(v) => !v && setDetail(null)}
         contributions={detail ? memberContributions(detail) : []}
+        dues={detail ? duesByMember.get(detail.id) : null}
+        receipts={feeReceipts.filter((r) => detail && r.memberId === detail.id)}
+        onDownloadReceipt={(r) => downloadFeeReceipt(r, detail)}
+        onRenew={detail ? () => renew(detail, true) : undefined}
         onEdit={() => { setEditing(detail); setDetail(null); setFormOpen(true) }}
       />
       <ConfirmDialog

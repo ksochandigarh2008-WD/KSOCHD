@@ -12,6 +12,9 @@ import { uid, hexToRgbString, mixHex, get, setImmutable } from '../lib/utils'
 import { defaultNotifications, deliverSubmission } from '../lib/notifications'
 import { SEEDED_PASSWORD, defaultMaintenance } from '../lib/production'
 import { defaultAnalytics } from '../lib/analytics'
+import {
+  defaultMembershipSettings, ensureMemberNo, membershipOf, reconcileStatuses,
+} from '../lib/membership'
 
 /**
  * BOOKS: every finance transaction posts a balanced voucher.
@@ -40,7 +43,13 @@ const upsertVoucher = (txn, vouchers, grants) => {
 const seedFinance = () => {
   const transactions = seedTransactions()
   const grants = seedGrants()
-  return { transactions, accounts: seedAccounts(), grants, vouchers: buildBooks(transactions, grants), receipts: [] }
+  return {
+    transactions, accounts: seedAccounts(), grants, vouchers: buildBooks(transactions, grants),
+    receipts: [],
+    // Membership fee receipts are issued, never seeded — a numbering series with
+    // demo rows in it would be worse than no series at all.
+    feeReceipts: [],
+  }
 }
 
 /** The audit trail is capped so it can never outgrow localStorage. */
@@ -129,6 +138,9 @@ export const useSite = create(
   maintenance: defaultMaintenance(),
   analytics: defaultAnalytics(),
   notifications: defaultNotifications(),
+  // Editable in Admin → Membership → Tiers & fees. Seeded from seedData.js, so a
+  // store written before this key existed still resolves to Individual/Family.
+  membership: defaultMembershipSettings(),
       },
       ai: defaultAiSettings,
       audit: [],   // append-only trail of who changed what (see logAction)
@@ -240,7 +252,13 @@ export const useSite = create(
 
       /* ------- membership + finance rows (generic CRUD) ------- */
       addRow: (kind, row) => {
-        const record = { id: uuidv4(), createdAt: new Date().toISOString().slice(0, 10), ...row }
+        let record = { id: uuidv4(), createdAt: new Date().toISOString().slice(0, 10), ...row }
+        // Belt and braces: src/lib/db.js assigns this for every backend, but a
+        // local write that bypasses db (an import, a future caller) must not be
+        // able to mint a duplicate membership number either.
+        if (kind === 'memberships') {
+          record = { ...record, memberNo: ensureMemberNo(getState().memberships, record.memberNo) }
+        }
         getState().logAction('created', kind, record.party || record.name || record.donor || record.no || record.id)
         set((s) => {
           const next = { [kind]: [record, ...(s[kind] || [])] }
@@ -271,6 +289,91 @@ export const useSite = create(
         })
       },
       setRows: (kind, rows) => set(() => ({ [kind]: rows })),
+
+      /* ---------------- membership tiers (settings-backed) ---------------- */
+
+      /**
+       * Rename a tier and/or reprice it. A rename cascades to the members on that
+       * tier, otherwise their records would point at a tier that no longer exists
+       * and every dropdown would show a blank.
+       */
+      updateMembershipTier: (name, patch) => {
+        const state = getState()
+        const tiers = membershipOf(state.settings).tiers
+        const current = tiers.find((t) => t.name === name)
+        if (!current) return { ok: false, reason: 'unknown tier' }
+
+        const nextName = String(patch?.name ?? current.name).trim()
+        if (!nextName) return { ok: false, reason: 'a tier needs a name' }
+        if (name !== nextName && tiers.some((t) => t.name === nextName)) {
+          return { ok: false, reason: 'another tier already has that name' }
+        }
+
+        const next = tiers.map((t) => (t.name === name
+          ? { ...t, name: nextName, fee: Math.max(0, Number(patch?.fee ?? t.fee) || 0), cycle: patch?.cycle ?? t.cycle }
+          : t))
+
+        const renamed = name !== nextName
+        const moved = renamed ? (state.memberships || []).filter((m) => m.tier === name).length : 0
+        set((s) => ({
+          settings: { ...s.settings, membership: { tiers: next } },
+          ...(renamed
+            ? { memberships: (s.memberships || []).map((m) => (m.tier === name ? { ...m, tier: nextName } : m)) }
+            : {}),
+        }))
+        getState().logAction('updated membership tier', name, renamed ? `renamed to ${nextName} (${moved} members moved)` : 'repriced')
+        return { ok: true, renamed, moved }
+      },
+
+      addMembershipTier: (tier) => {
+        const name = String(tier?.name ?? '').trim()
+        if (!name) return { ok: false, reason: 'a tier needs a name' }
+        const tiers = membershipOf(getState().settings).tiers
+        if (tiers.some((t) => t.name.toLowerCase() === name.toLowerCase())) {
+          return { ok: false, reason: 'that tier already exists' }
+        }
+        const next = [...tiers, { name, fee: Math.max(0, Number(tier?.fee) || 0), cycle: tier?.cycle || 'annual' }]
+        set((s) => ({ settings: { ...s.settings, membership: { tiers: next } } }))
+        getState().logAction('added membership tier', name)
+        return { ok: true, tiers: next }
+      },
+
+      /**
+       * Remove a tier. Refuses the last one (the list can never be empty) and,
+       * unless forced, refuses a tier that members are still sitting on — those
+       * records would be left pointing at nothing.
+       */
+      removeMembershipTier: (name, { force = false } = {}) => {
+        const state = getState()
+        const tiers = membershipOf(state.settings).tiers
+        if (tiers.length <= 1) return { ok: false, reason: 'at least one tier is required' }
+
+        const inUse = (state.memberships || []).filter((m) => m.tier === name).length
+        if (inUse && !force) return { ok: false, reason: 'in use', inUse }
+
+        set((s) => ({
+          settings: { ...s.settings, membership: { tiers: tiers.filter((t) => t.name !== name) } },
+        }))
+        getState().logAction('removed membership tier', name, inUse ? `${inUse} members left on a removed tier` : '')
+        return { ok: true, inUse }
+      },
+
+      /**
+       * Bring stored statuses in line with renewal dates. Returns how many rows
+       * changed, so the caller can report it; nothing is touched when the answer
+       * is "none", which keeps the audit trail free of no-op entries.
+       */
+      reconcileMemberStatuses: () => {
+        const state = getState()
+        const changes = reconcileStatuses(state.memberships || [])
+        if (!changes.length) return 0
+        const byId = new Map(changes.map((c) => [c.id, c.status]))
+        set((s) => ({
+          memberships: (s.memberships || []).map((m) => (byId.has(m.id) ? { ...m, status: byId.get(m.id) } : m)),
+        }))
+        getState().logAction('reconciled member statuses', 'memberships', `${changes.length} changed`)
+        return changes.length
+      },
       clearDemoRows: () =>
         set((s) => {
           const strip = (rows) => (rows || []).filter((r) => !r.demo)
@@ -283,6 +386,7 @@ export const useSite = create(
             vouchers: strip(s.vouchers),
             grants: strip(s.grants),
             receipts: strip(s.receipts),
+            feeReceipts: strip(s.feeReceipts),
           }
         }),
       resetDemoRows: () => {
@@ -387,7 +491,7 @@ export const useSite = create(
           { version: s.version, content: s.content, theme: s.theme, settings: s.settings, ai: s.ai,
             memberships: s.memberships, transactions: s.transactions, pledges: s.pledges, budgets: s.budgets,
             accounts: s.accounts, vouchers: s.vouchers, grants: s.grants, receipts: s.receipts,
-            submissions: s.submissions },
+            feeReceipts: s.feeReceipts, submissions: s.submissions },
           null,
           2,
         )
@@ -410,6 +514,7 @@ export const useSite = create(
             vouchers: Array.isArray(data.vouchers) ? data.vouchers : s.vouchers,
             grants: Array.isArray(data.grants) ? data.grants : s.grants,
             receipts: Array.isArray(data.receipts) ? data.receipts : s.receipts,
+            feeReceipts: Array.isArray(data.feeReceipts) ? data.feeReceipts : s.feeReceipts,
             submissions: Array.isArray(data.submissions) ? data.submissions : s.submissions,
           }))
           applyTheme({ ...initialTheme, ...(data.theme || {}) })
@@ -462,6 +567,7 @@ export const useSite = create(
         vouchers: s.vouchers,
         grants: s.grants,
         receipts: s.receipts,
+        feeReceipts: s.feeReceipts,
         submissions: s.submissions,
         audit: s.audit,
         // note: `authed` intentionally not persisted — you sign in each session

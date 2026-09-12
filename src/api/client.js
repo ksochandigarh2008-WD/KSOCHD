@@ -83,6 +83,7 @@ export const api = {
   vouchers: resource('vouchers'),
   grants: resource('grants'),
   receipts: resource('receipts'),
+  feeReceipts: resource('feeReceipts'),
   submissions: {
     create: (row) => tryRemote(() => request('/submissions', { method: 'POST', body: JSON.stringify(row) })),
   },

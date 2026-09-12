@@ -2,7 +2,7 @@
 
 Written so a failed turn costs nothing. **Read this first when resuming.**
 
-Last verified state: **`npm test` → 390 PASS / 0 FAIL**, `npx vite build` ✓ (12 s).
+Last verified state: **`npm test` → 480 PASS / 0 FAIL**, `npx vite build` ✓ (12 s).
 Environment note: `node_modules` is NOT persisted between sessions — run `npm ci` first (≈7 s).
 
 ---
@@ -72,6 +72,37 @@ cannot be checked locally — only after a real deploy.
 - **Fixed a pre-existing duplicate React key** in the footer: "Corporate partnerships" and
   "Contact" both pointed at `/contact`, so one could be silently dropped. The test filter only
   matched one phrasing of the warning, so it had gone unnoticed; the filter is widened.
+
+## Membership revision (correctness + editable tiers + receipts/dues)
+
+`src/lib/membership.js` is new — pure functions, no React, no store.
+
+- **Member numbers** were `Math.floor(Math.random() * 9000) + 1000`, which collides
+  (53 duplicates per 1000 draws, and the range overlaps the seeded KSO-1001…KSO-1012).
+  Now `nextMemberNo()` derives the next number from the records that exist. Assigned in
+  `src/lib/db.js` via a `prepare` hook, so it holds for local, REST **and** Supabase;
+  `store.addRow` keeps a second guard for local writes that bypass `db`.
+- **Fee cycles.** `renew()` treated every cycle except monthly as annual, so a one-time
+  or no-fee member could be renewed and charged forever. `isRenewable()`/`nextRenewalDate()`
+  now own the policy; the other two cycles return `null` and the UI refuses with a reason.
+- **Status truth.** Stored status and renewal date disagreed, so "Active" could sit on a
+  lapsed membership. `effectiveStatus()` reconciles (Suspended/Inactive/Pending always win)
+  and the directory flags the divergence. The header's **Reconcile N statuses** button
+  applies it; KPIs count from the date, not the stored string.
+- **Editable tiers.** Tiers/fees moved to `settings.membership` (defaults still from
+  `seedData.js`, so old stores resolve unchanged). Rename cascades to the members on that
+  tier; a repricing never rewrites a member's own fee; an occupied tier needs confirming
+  and the last tier cannot be removed at all.
+- **Dues.** `membershipDues()` per financial year: annual = 1× fee, monthly = 12×,
+  one-time = 1× ever, none = n/a. New **Dues** column, **Arrears** KPI, and a breakdown on
+  the member profile. Donations never count as fees.
+- **Fee receipts.** `KSO/MEM/{fy}/{n}` in its own `feeReceipts` collection.
+  Deliberately NOT the 80G series: `nextReceiptNo` counts any receipt whose number
+  contains `/{fy}/`, so mixing them would skip 80G numbers — proven in a test.
+  `buildFeeReceipt` says on its face that it is not a donation and makes no 80G claim.
+  `missingCompliance(..., { require80G: false })` stops a fee receipt demanding a
+  80G validity date it never uses.
+- Member profile gained a **Renew** button (it was reachable only from the kebab menu).
 
 ## Not started
 

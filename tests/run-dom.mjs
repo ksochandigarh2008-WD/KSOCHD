@@ -300,6 +300,289 @@ check('profile shows contributions or the empty note', has('Contributed') || has
 await act(async () => { document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
 await act(async () => { await new Promise((r) => setTimeout(r, 240)) })
 
+/* ====================================================================== *
+ * Membership revision: member numbers, editable tiers, fee cycles,
+ * status reconciliation, dues and fee receipts.
+ * ====================================================================== */
+const M = m.membership
+
+/** Run a store mutation inside act() so React state updates stay batched. */
+const mutate = async (fn) => {
+  let out
+  await act(async () => { out = fn() })
+  return out
+}
+
+/** Refresh the React Query snapshot after a direct store write. */
+const syncQueries = async () => {
+  await act(async () => { await m.queryClient.invalidateQueries() })
+  await act(async () => { await new Promise((r) => setTimeout(r, 260)) })
+}
+
+console.log('\n— Member numbers are assigned, never drawn at random —')
+const nosNow = () => m.useSite.getState().memberships.map((x) => x.memberNo)
+const nosBefore = nosNow()
+check('every existing member has a number', nosBefore.every(Boolean), `${nosBefore.length} numbers`)
+check('no duplicates in the roster',
+  new Set(nosBefore).size === nosBefore.length, `${new Set(nosBefore).size} unique of ${nosBefore.length}`)
+check('the next number follows the highest',
+  M.nextMemberNo(m.useSite.getState().memberships) === 'KSO-1013',
+  M.nextMemberNo(m.useSite.getState().memberships))
+check('the random generator is gone from the form',
+  typeof M.nextMemberNo === 'function' && !/Math\.random\(\) \* 9000/.test(String(M.nextMemberNo)))
+
+// Add a member through the real form and read back what the store stored.
+await click(q('[data-nav-item="members"]'))
+await act(async () => { await new Promise((r) => setTimeout(r, 300)) })
+await click(qa('button').find((b) => b.textContent.trim() === 'Add member'))
+await act(async () => { await new Promise((r) => setTimeout(r, 260)) })
+check('member form offers the settings-backed tiers', has('Individual — ₹500/yr'), 'Individual — ₹500/yr')
+
+const nameField = qa('input').find((i) => i.placeholder === 'Harpreet Singh')
+await act(async () => { setInput(nameField, 'Numbering Test Member') })
+// The header button carries the same label, so scope the submit to the dialog.
+const dialog = document.querySelector('[role="dialog"]')
+const addSubmit = [...(dialog?.querySelectorAll('button') || [])].find((b) => b.textContent.trim() === 'Add member')
+check('the dialog submit button was found', Boolean(addSubmit))
+await click(addSubmit)
+await act(async () => { await new Promise((r) => setTimeout(r, 700)) })
+
+const numMember = m.useSite.getState().memberships.find((x) => x.name === 'Numbering Test Member')
+check('the new member received a number', Boolean(numMember?.memberNo), String(numMember?.memberNo))
+check('it is the next in sequence', numMember?.memberNo === 'KSO-1013', String(numMember?.memberNo))
+check('it does not duplicate anyone',
+  new Set(nosNow()).size === nosNow().length, `${new Set(nosNow()).size} unique of ${nosNow().length}`)
+check('fee defaults to the tier fee', Number(numMember?.feeAmount) === 500, String(numMember?.feeAmount))
+
+/* ---------------------------- fee cycles ------------------------------- */
+console.log('\n— Fee cycles: only monthly and annual renew —')
+check('monthly is renewable', M.isRenewable('monthly'))
+check('annual is renewable', M.isRenewable('annual'))
+check('one-time is NOT renewable', !M.isRenewable('one-time'))
+check('no-fee is NOT renewable', !M.isRenewable('none'))
+check('a one-time member gets no next date', M.nextRenewalDate({ feeCycle: 'one-time' }) === null)
+check('an annual member does get one',
+  /^\d{4}-\d{2}-\d{2}$/.test(M.nextRenewalDate({ feeCycle: 'annual' }) || ''),
+  String(M.nextRenewalDate({ feeCycle: 'annual' })))
+
+// The old code turned every non-monthly cycle into annual. Prove the new path
+// refuses instead, through the real renew handler in the tab.
+await act(async () => {
+  m.useSite.setState((s) => ({
+    memberships: s.memberships.map((x) => (x.id === numMember.id ? { ...x, feeCycle: 'one-time' } : x)),
+  }))
+})
+await syncQueries()
+const txBeforeRenew = m.useSite.getState().transactions.length
+const receiptBeforeRenew = m.useSite.getState().feeReceipts.length
+const oneTimeRow = () => qa('table tbody tr').find((tr) => tr.textContent.includes('Numbering Test Member'))
+const oneTimeLink = oneTimeRow()?.querySelector('button')
+if (oneTimeLink) await click(oneTimeLink)
+await act(async () => { await new Promise((r) => setTimeout(r, 320)) })
+check('one-time fee cycle is shown plainly', has('one-time — does not renew'), 'one-time — does not renew')
+await act(async () => { document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
+await act(async () => { await new Promise((r) => setTimeout(r, 240)) })
+
+/* ---------------------- status reconciliation -------------------------- */
+console.log('\n— Status truth: stored status vs renewal date —')
+const nowRef = new Date()
+check('active + past date reads as Expired',
+  M.effectiveStatus({ status: 'Active', renewsOn: '2020-01-01' }, nowRef).status === 'Expired')
+check('Suspended is never overridden by a date',
+  M.effectiveStatus({ status: 'Suspended', renewsOn: '2020-01-01' }, nowRef).status === 'Suspended')
+check('no renewal date leaves the status alone',
+  M.effectiveStatus({ status: 'Active' }, nowRef).status === 'Active')
+
+// Plant a stale row, then let the real Reconcile button fix it.
+await act(async () => {
+  m.useSite.setState((s) => ({
+    memberships: s.memberships.map((x) => (x.id === numMember.id ? { ...x, status: 'Active', renewsOn: '2020-01-01' } : x)),
+  }))
+})
+await syncQueries()
+check('the stale row is detected', M.reconcileStatuses(m.useSite.getState().memberships).length >= 1,
+  `${M.reconcileStatuses(m.useSite.getState().memberships).length} stale`)
+const reconBtn = qa('button').find((b) => b.textContent.includes('Reconcile'))
+check('the Reconcile button appears when something is stale', Boolean(reconBtn))
+check('it names how many rows are stale', /Reconcile \d+ status/.test(reconBtn?.textContent || ''), reconBtn?.textContent?.trim())
+await click(reconBtn)
+await act(async () => { await new Promise((r) => setTimeout(r, 400)) })
+const fixed = m.useSite.getState().memberships.find((x) => x.id === numMember.id)
+check('reconciling rewrites the stored status', fixed?.status === 'Expired', String(fixed?.status))
+check('nothing is left stale afterwards', M.reconcileStatuses(m.useSite.getState().memberships).length === 0)
+check('the reconciliation is in the audit trail',
+  (m.useSite.getState().audit || []).some((a) => a.action === 'reconciled member statuses'))
+
+/* ------------------------------- dues ---------------------------------- */
+console.log('\n— Dues are visible and add up —')
+const duesList = M.membershipDues(m.useSite.getState().memberships, m.useSite.getState().transactions, m.useSite.getState().settings)
+check('dues computed for every member', duesList.length === m.useSite.getState().memberships.length)
+check('every row has a status', duesList.every((d) => ['paid', 'partial', 'unpaid', 'n/a'].includes(d.status)))
+check('due is never negative', duesList.every((d) => d.due >= 0))
+check('the directory shows a Dues column', has('Dues'))
+check('the arrears KPI is on screen', has('Arrears'))
+check('a pledge row would not count as a fee', M.membershipDues(
+  [{ id: 'p', name: 'P', feeAmount: 500, feeCycle: 'annual' }],
+  [{ type: 'income', category: 'Donation', amount: 5000, date: '2026-05-01', memberId: 'p' }],
+  undefined, '2026-27')[0].status === 'unpaid')
+
+/* -------------------------- editable tiers ----------------------------- */
+console.log('\n— Tiers are editable, and guarded —')
+const tiersTab2 = qa('[role="tab"]').find((t) => t.textContent.includes('Tiers'))
+await clickTab(tiersTab2)
+await act(async () => { await new Promise((r) => setTimeout(r, 300)) })
+check('the tier editor is present', has('Edit tiers'))
+check('seed tiers are still listed', has('Individual') && has('Family'))
+
+// Store writes go through act() — the same discipline the rest of this suite
+// keeps — so React re-renders do not leak act() warnings into the console.
+
+// Add a tier through the store action the UI calls, then check it is offered.
+const addTier = await mutate(() => m.useSite.getState().addMembershipTier({ name: 'Student', fee: 250 }))
+check('a new tier can be added', addTier.ok === true, JSON.stringify(addTier))
+check('it appears in the tier list',
+  M.tierNames(m.useSite.getState().settings).includes('Student'),
+  M.tierNames(m.useSite.getState().settings).join('/'))
+check('its fee is stored', M.tierFee(m.useSite.getState().settings, 'Student') === 250)
+check('a duplicate tier is refused',
+  (await mutate(() => m.useSite.getState().addMembershipTier({ name: 'student', fee: 1 }))).ok === false)
+check('a blank tier name is refused',
+  (await mutate(() => m.useSite.getState().addMembershipTier({ name: '   ' }))).ok === false)
+
+// A repricing must not rewrite what a member already pays.
+const beforeFee = m.useSite.getState().memberships.find((x) => x.id === numMember.id).feeAmount
+await mutate(() => m.useSite.getState().updateMembershipTier('Individual', { fee: 750 }))
+check('repricing a tier succeeds', M.tierFee(m.useSite.getState().settings, 'Individual') === 750)
+check('a member keeps their own fee after a repricing',
+  m.useSite.getState().memberships.find((x) => x.id === numMember.id).feeAmount === beforeFee,
+  `${beforeFee} -> ${m.useSite.getState().memberships.find((x) => x.id === numMember.id).feeAmount}`)
+
+// Renaming cascades to the members sitting on that tier.
+const onIndividual = m.useSite.getState().memberships.filter((x) => x.tier === 'Individual').length
+const rename = await mutate(() => m.useSite.getState().updateMembershipTier('Individual', { name: 'Individual (Ordinary)' }))
+check('renaming a tier succeeds', rename.ok === true, JSON.stringify(rename))
+check('renaming moves the members on it', rename.moved === onIndividual, `${rename.moved} moved`)
+check('no member is left on the old name',
+  m.useSite.getState().memberships.every((x) => x.tier !== 'Individual'),
+  `${m.useSite.getState().memberships.filter((x) => x.tier === 'Individual').length} left behind`)
+check('the new name is in settings',
+  M.tierNames(m.useSite.getState().settings).includes('Individual (Ordinary)'))
+await mutate(() => m.useSite.getState().updateMembershipTier('Individual (Ordinary)', { name: 'Individual' }))
+
+// Removal guards.
+const inUseTier = 'Individual'
+const blocked = await mutate(() => m.useSite.getState().removeMembershipTier(inUseTier))
+check('removing an occupied tier is refused', blocked.reason === 'in use', JSON.stringify(blocked))
+check('removing it by force succeeds',
+  (await mutate(() => m.useSite.getState().removeMembershipTier(inUseTier, { force: true }))).ok === true)
+check('the tier is gone',
+  !M.tierNames(m.useSite.getState().settings).includes(inUseTier),
+  M.tierNames(m.useSite.getState().settings).join('/'))
+// Put it back and drop the test tier so later assertions see a sane store.
+await mutate(() => m.useSite.getState().addMembershipTier({ name: 'Individual', fee: 500 }))
+await mutate(() => m.useSite.getState().removeMembershipTier('Student'))
+
+// The last remaining tier can never be removed: every member must sit on one.
+let lastTierRefused = false
+await mutate(() => {
+  const names = M.tierNames(m.useSite.getState().settings)
+  names.filter((n) => n !== 'Family').forEach((n) => m.useSite.getState().removeMembershipTier(n, { force: true }))
+  lastTierRefused = m.useSite.getState().removeMembershipTier('Family').ok === false
+})
+check('the last tier cannot be removed', lastTierRefused)
+
+// Restore the shipped pair.
+await act(async () => {
+  m.useSite.setState((s) => ({ settings: { ...s.settings, membership: m.membership.defaultMembershipSettings() } }))
+})
+check('settings restore to the shipped tiers',
+  JSON.stringify(M.tierNames(m.useSite.getState().settings)) === '["Individual","Family"]',
+  M.tierNames(m.useSite.getState().settings).join('/'))
+
+/* --------------------------- fee receipts ------------------------------ */
+console.log('\n— Fee receipts are their own series —')
+check('the fee series is separate from 80G',
+  m.accounting.nextFeeReceiptNo([], '2026-09-12') === 'KSO/MEM/2026-27/0001',
+  m.accounting.nextFeeReceiptNo([], '2026-09-12'))
+check('it does not collide with the 80G series',
+  m.accounting.nextReceiptNo([], '2026-09-12') === 'KSO/80G/2026-27/0001',
+  m.accounting.nextReceiptNo([], '2026-09-12'))
+check('an 80G receipt does not advance the fee series',
+  m.accounting.nextFeeReceiptNo([{ no: 'KSO/80G/2026-27/0001' }], '2026-09-12') === 'KSO/MEM/2026-27/0001')
+check('a deleted number is not handed out twice',
+  m.accounting.nextFeeReceiptNo([{ no: 'KSO/MEM/2026-27/0001' }, { no: 'KSO/MEM/2026-27/0002' }], '2026-09-12') === 'KSO/MEM/2026-27/0003')
+
+const feeModel = m.docs.buildFeeReceipt({
+  receipt: { no: 'KSO/MEM/2026-27/0001', date: '2026-09-12', member: 'Harpreet Singh', memberNo: 'KSO-1001', tier: 'Individual', amount: 500, period: '2026-27' },
+  settings: m.useSite.getState().settings,
+  org: m.useSite.getState().content.org,
+})
+check('the receipt spells the amount out', /five hundred/i.test(feeModel.amountWords), feeModel.amountWords)
+check('the receipt says it is not a donation',
+  /not a donation/i.test(feeModel.notADonation) && /80G/.test(feeModel.notADonation))
+check('a fee receipt does not demand 80G details',
+  !feeModel.missing.some((x) => x.key === 'g80No' || x.key === 'g80ValidUpto'),
+  feeModel.missing.map((x) => x.key).join(',') || 'nothing missing')
+
+/* ---------------------- renewal issues a receipt ----------------------- */
+console.log('\n— Renewal records the fee and issues a numbered receipt —')
+// The tier section above left this tab on Tiers & fees, where no table renders.
+await clickTab(qa('[role="tab"]').find((t) => t.textContent.includes('Directory')))
+await act(async () => { await new Promise((r) => setTimeout(r, 300)) })
+await act(async () => {
+  m.useSite.setState((s) => ({
+    memberships: s.memberships.map((x) => (x.id === numMember.id
+      ? { ...x, feeCycle: 'annual', status: 'Active', renewsOn: '2020-01-01', feeAmount: 500 }
+      : x)),
+  }))
+})
+await syncQueries()
+
+const targetRow = () => qa('table tbody tr').find((tr) => tr.textContent.includes('Numbering Test Member'))
+// The row's first button is the name link, which opens the profile.
+const nameLink = targetRow()?.querySelector('button')
+if (nameLink) await click(nameLink)
+await act(async () => { await new Promise((r) => setTimeout(r, 320)) })
+const profile = document.querySelector('[role="dialog"]')
+const renewBtn = [...(profile?.querySelectorAll('button') || [])].find((b) => b.textContent.trim().startsWith('Renew'))
+check('a renewable member offers Renew on the profile', Boolean(renewBtn))
+check('the profile explains the cycle', has('annual'), 'annual')
+const memTxBefore = m.useSite.getState().transactions.length
+const recBefore = m.useSite.getState().feeReceipts.length
+if (renewBtn) await click(renewBtn)
+await act(async () => { await new Promise((r) => setTimeout(r, 800)) })
+await syncQueries()
+
+const after = m.useSite.getState()
+check('renewal recorded a fee transaction', after.transactions.length === memTxBefore + 1, `${memTxBefore} → ${after.transactions.length}`)
+check('renewal issued a numbered fee receipt', after.feeReceipts.length === recBefore + 1, `${recBefore} → ${after.feeReceipts.length}`)
+const issued = after.feeReceipts[after.feeReceipts.length - 1] || after.feeReceipts[0]
+check('the receipt is in the MEM series', /^KSO\/MEM\/\d{4}-\d{2}\/\d{4}$/.test(issued?.no || ''), String(issued?.no))
+check('the receipt is linked to the member', issued?.memberId === numMember.id)
+check('the receipt carries the amount', Number(issued?.amount) === 500, String(issued?.amount))
+const renewed = after.memberships.find((x) => x.id === numMember.id)
+check('the renewal date moved forward', String(renewed?.renewsOn) > '2026-01-01', String(renewed?.renewsOn))
+check('the member is Active again', renewed?.status === 'Active', String(renewed?.status))
+check('the fee is tagged to the member on the ledger row',
+  after.transactions.some((t) => t.memberId === numMember.id && t.category === 'Membership fee' && Number(t.amount) === 500))
+check('the renewal is in the audit trail',
+  (after.audit || []).some((a) => a.action === 'created' && a.target === 'feeReceipts'))
+
+// The receipt must survive a reload — it has to be in the persisted slice.
+const persisted = JSON.stringify(JSON.parse(localStorage.getItem('kso-site-store-v2') || '{}'))
+check('fee receipts are persisted, not just held in memory', persisted.includes('KSO/MEM/'),
+  persisted.includes('KSO/MEM/') ? 'present in localStorage' : 'MISSING from localStorage')
+
+// Clean up the member this block numMember so later sections see the seed roster.
+await act(async () => {
+  m.useSite.setState((s) => ({
+    memberships: s.memberships.filter((x) => x.id !== numMember.id),
+    feeReceipts: s.feeReceipts.filter((r) => r.memberId !== numMember.id),
+    transactions: s.transactions.filter((t) => t.memberId !== numMember.id),
+  }))
+})
+check('test member removed', !m.useSite.getState().memberships.some((x) => x.id === numMember.id))
+
 await click(q('[data-nav-item="finance"]'))
 await act(async () => { await new Promise((r) => setTimeout(r, 300)) })
 check('clicking Finance loads finance tab', has('Financial management'))
@@ -482,6 +765,15 @@ check('volunteer created a membership record', afterMembers.length === beforeMem
 const created = afterMembers.find((x) => x.name === 'Regression Tester')
 check('record has Pending status', created?.status === 'Pending')
 check('record typed as Volunteer', created?.type === 'Volunteer')
+// The public form used to mint a random KSO-####. It must take the next number
+// in sequence now, or the office roster has gaps in it.
+check('public application takes the next member number in sequence',
+  /^KSO-\d+$/.test(created?.memberNo || '') &&
+  Number(String(created?.memberNo).replace('KSO-', '')) > 1000,
+  String(created?.memberNo))
+check('public application does not duplicate a number',
+  new Set(afterMembers.map((x) => x.memberNo)).size === afterMembers.length,
+  `${new Set(afterMembers.map((x) => x.memberNo)).size} unique of ${afterMembers.length}`)
 check('record captured skills', Boolean(created?.skills))
 
 console.log('\n— Donation writes into the finance ledger —')

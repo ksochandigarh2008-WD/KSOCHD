@@ -1,17 +1,22 @@
 import { format, parseISO } from 'date-fns'
-import { Mail, Phone, IdCard, CalendarClock, Wallet, Pencil, Users } from 'lucide-react'
+import { Mail, Phone, IdCard, CalendarClock, Wallet, Pencil, Users, Download, ReceiptText, RefreshCw } from 'lucide-react'
 import {
   Dialog, DialogContent, DialogFooter, Button, Badge, Avatar, AvatarFallback, Separator, Progress,
 } from '../../../components/admin/ui'
-import { MEMBER_TIERS, TIER_FEES } from '../../../data/seedData'
 import { renewalState, money } from '../../../lib/finance'
+import { cycleLabel, effectiveStatus, isRenewable } from '../../../lib/membership'
 import { formatDate, initials } from '../../../lib/utils'
 
-/** Read-only profile for one member, with their contributions and household. */
-export default function MemberDetail({ member, open, onOpenChange, contributions, onEdit }) {
+/** Read-only profile for one member, with their contributions, dues and household. */
+export default function MemberDetail({
+  member, open, onOpenChange, contributions, onEdit, dues = null, receipts = [],
+  onDownloadReceipt, onRenew,
+}) {
   if (!member) return null
   const renewal = renewalState(member)
   const total = contributions.reduce((a, t) => a + Number(t.amount || 0), 0)
+  const eff = effectiveStatus(member)
+  const renewable = isRenewable(member.feeCycle)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -26,15 +31,28 @@ export default function MemberDetail({ member, open, onOpenChange, contributions
             <p className="mt-1.5 flex items-center gap-1.5 text-xs text-ink-500"><Mail className="h-3.5 w-3.5" /> {member.email || '—'}</p>
             <p className="flex items-center gap-1.5 text-xs text-ink-500"><Phone className="h-3.5 w-3.5" /> {member.phone || '—'}</p>
           </div>
-          <Button size="sm" variant="outline" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /> Edit</Button>
+          <div className="flex shrink-0 gap-2">
+            {/* Renewing used to be reachable only from the row's kebab menu. */}
+            {onRenew && renewable && (
+              <Button size="sm" onClick={onRenew}><RefreshCw className="h-3.5 w-3.5" /> Renew</Button>
+            )}
+            <Button size="sm" variant="outline" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /> Edit</Button>
+          </div>
         </div>
+
+        {!renewable && (
+          <p className="mt-3 rounded-lg bg-ink-900/[0.03] px-3 py-2 text-xs text-ink-600">
+            {cycleLabel(member.feeCycle)} — this membership is never renewed or charged again.
+          </p>
+        )}
 
         <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
           {[
             ['Centre', member.centre],
             ['Joined', member.joined ? format(parseISO(member.joined), 'dd MMM yyyy') : '—'],
             ['Renews', member.renewsOn ? format(parseISO(member.renewsOn), 'dd MMM yyyy') : '—'],
-            ['Fee', member.feeAmount ? `${money(member.feeAmount)} / ${member.feeCycle}` : '—'],
+            ['Fee', member.feeAmount ? `${money(member.feeAmount)} — ${cycleLabel(member.feeCycle)}` : '—'],
+            ['Status', eff.changed ? `${member.status} (renewal date says ${eff.status})` : member.status],
             ['Events attended', member.eventsAttended ?? 0],
             ['City', member.city || '—'],
           ].map(([k, v]) => (
@@ -74,6 +92,49 @@ export default function MemberDetail({ member, open, onOpenChange, contributions
                 <Badge key={s} tone="slate">{s}</Badge>
               ))}
             </div>
+          </div>
+        )}
+
+        {dues && dues.status !== 'n/a' && (
+          <div className="mt-4 rounded-xl border border-ink-900/8 p-3.5">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold">Dues · {dues.fy}</p>
+              <Badge tone={dues.due === 0 ? 'green' : dues.status === 'partial' ? 'amber' : 'red'}>
+                {dues.due === 0 ? 'Paid in full' : dues.status === 'partial' ? 'Part paid' : 'Unpaid'}
+              </Badge>
+            </div>
+            <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+              {[['Expected', dues.expected], ['Paid', dues.paid], ['Outstanding', dues.due]].map(([k, v]) => (
+                <div key={k} className="rounded-lg bg-ink-900/[0.03] px-2 py-1.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-ink-500">{k}</p>
+                  <p className="text-sm font-semibold">{money(v)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {receipts.length > 0 && (
+          <div className="mt-4">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-ink-500">
+              <ReceiptText className="mr-1 inline h-3 w-3" />
+              Fee receipts
+            </p>
+            <ul className="mt-1.5 divide-y divide-ink-900/5 overflow-hidden rounded-xl border border-ink-900/8">
+              {receipts.slice(0, 6).map((r) => (
+                <li key={r.id || r.no} className="flex items-center justify-between gap-3 px-3.5 py-2.5 text-sm">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{r.no}</p>
+                    <p className="text-[11px] text-ink-500">{formatDate(r.date)} · {money(r.amount)}</p>
+                  </div>
+                  {onDownloadReceipt && (
+                    <Button variant="ghost" size="sm" onClick={() => onDownloadReceipt(r)}>
+                      <Download className="h-3.5 w-3.5" /> PDF
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
