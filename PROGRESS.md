@@ -143,8 +143,8 @@ pairs with the `spa-redirect` restore in `src/main.jsx`, so a shared link would 
 route. The step now asserts `dist/404.html` exists instead. Verified: a `BASE_PATH=/KSOCHD` build
 emits `/KSOCHD/`-prefixed assets and keeps the interceptor.
 
-Everything else from this round is on `origin/main` as **`5fb725d`**; the workflow file is the only
-thing held back, in local commit `d7e7bc1`. Pushing it was refused verbatim:
+Everything else from this round is on `origin/main`; the workflow file is the only thing held back,
+in a local commit sitting on top of it. Pushing it was refused verbatim:
 `refusing to allow a Personal Access Token to create or update workflow '.github/workflows/deploy-pages.yml' without 'workflow' scope`.
 The token also cannot enable Pages — `POST /repos/…/pages` returns `403 Resource not accessible by
 personal access token`, so that is a Settings click, not a script.
