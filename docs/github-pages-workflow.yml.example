@@ -1,3 +1,12 @@
+# GitHub Pages deployment — DISABLED (kept as a reference).
+#
+# This file was moved out of .github/workflows/ because committing a workflow needs a
+# GitHub token with the `workflow` scope. To enable automatic GitHub Pages deploys:
+#   1. regenerate your token with the `workflow` scope
+#   2. move this file back:  git mv docs/github-pages-workflow.yml.example .github/workflows/deploy-pages.yml
+#
+# Not needed on Netlify, Vercel or Cloudflare Pages — those hosts build the site
+# themselves and this file would only trigger a second, unnecessary deploy.
 name: Deploy to GitHub Pages
 
 on:
