@@ -142,6 +142,77 @@ for (const id of ['overview', 'content', 'collections', 'about', 'impact', 'memb
 }
 check('mobile strip present', qa('[data-active]').length >= 13, `${qa('[data-active]').length} chips`)
 
+console.log('\n— Site content: homepage FAQs + SEO title are editable —')
+await click(q('[data-nav-item="content"]'))
+await act(async () => { await new Promise((r) => setTimeout(r, 220)) })
+check('content tab loads', has('Names, contact details'))
+check('FAQ editor renders', has('Homepage FAQs'))
+check('the SEO title field is present', has('Shown after the page name'))
+
+const faqSeed = m.useSite.getState().content.faqs
+check('store seeds FAQ rows', Array.isArray(faqSeed) && faqSeed.length > 0, `${faqSeed?.length} rows`)
+// Question text lives in an <input value>, which is not part of textContent — read the values.
+check('every seeded FAQ question is on screen',
+  faqSeed.every((f) => qa('input').some((el) => el.value === f.q)), `${faqSeed.length} questions`)
+check('FAQ answers render in textareas', qa('textarea').some((t) => t.value === faqSeed[0].a))
+
+// --- the SEO title suffix writes through to the store ---
+const seoInput = qa('input').find((el) => el.value === m.useSite.getState().content.seo.titleSuffix)
+check('SEO title input carries the stored value', Boolean(seoInput))
+await act(async () => { setInput(seoInput, 'KSO Chandigarh — test suffix') })
+check('editing the SEO title writes to the store',
+  m.useSite.getState().content.seo.titleSuffix === 'KSO Chandigarh — test suffix',
+  m.useSite.getState().content.seo.titleSuffix)
+
+// --- editing an existing FAQ question writes through to the store ---
+const qInput = qa('input').find((el) => el.value === faqSeed[0].q)
+check('FAQ question input renders', Boolean(qInput))
+await act(async () => { setInput(qInput, 'Edited question text') })
+check('editing a FAQ question writes to the store',
+  m.useSite.getState().content.faqs[0].q === 'Edited question text',
+  m.useSite.getState().content.faqs[0].q)
+
+// --- add ---
+const faqBefore = m.useSite.getState().content.faqs.length
+await click(qa('button').find((b) => b.textContent.includes('Add FAQ')))
+await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+const grown = m.useSite.getState().content.faqs
+check('Add FAQ appends a row', grown.length === faqBefore + 1, `${faqBefore} → ${grown.length}`)
+check('the new FAQ has a unique id', new Set(grown.map((f) => f.id)).size === grown.length)
+
+// --- reorder: move the new (last) row up ---
+const movedQ = grown[grown.length - 1].q
+const upBtns = qa('[aria-label="Move up"]')
+check('reorder controls render', upBtns.length === grown.length, `${upBtns.length} buttons`)
+await click(upBtns[upBtns.length - 1])
+await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+check('Move up reorders the FAQ list',
+  m.useSite.getState().content.faqs[grown.length - 2].q === movedQ,
+  `now at index ${m.useSite.getState().content.faqs.findIndex((f) => f.q === movedQ)}`)
+
+// --- delete the added row ---
+const delBtns = qa('[aria-label="Delete"]')
+await click(delBtns[delBtns.length - 1])
+await act(async () => { await new Promise((r) => setTimeout(r, 150)) })
+check('Delete removes the FAQ row', m.useSite.getState().content.faqs.length === faqBefore,
+  `${m.useSite.getState().content.faqs.length} rows`)
+check('deleting leaves the edited question intact',
+  m.useSite.getState().content.faqs[0].q === 'Edited question text')
+check('FAQ writes reach the audit trail',
+  (m.useSite.getState().audit || []).some((a) => a.target === 'faqs'),
+  (m.useSite.getState().audit || []).find((a) => a.target === 'faqs')?.action || 'none')
+
+// Restore the seeded content so the rest of the suite is unaffected.
+await act(async () => {
+  const s = m.useSite.getState()
+  m.useSite.setState({
+    content: { ...s.content, faqs: faqSeed, seo: { ...s.content.seo, titleSuffix: 'KSO Chandigarh' } },
+  })
+})
+check('content restored to seed for the rest of the suite',
+  m.useSite.getState().content.faqs[0].q === faqSeed[0].q &&
+  m.useSite.getState().content.faqs.length === faqSeed.length)
+
 console.log('\n— Live badges from store data —')
 const unread = m.useSite.getState().submissions.filter((s) => s.status === 'new').length
 const pending = m.useSite.getState().transactions.filter((t) => t.status === 'Pending').length

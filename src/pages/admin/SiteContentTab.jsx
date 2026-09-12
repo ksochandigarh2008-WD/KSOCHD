@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Building2, Home as HomeIcon, Heart, Search, Plus, X } from 'lucide-react'
+import { Building2, Home as HomeIcon, Heart, Search, Plus, X, ChevronUp, ChevronDown, Trash2, HelpCircle } from 'lucide-react'
 import { useSite } from '../../store/useSite'
 import { Panel, TF, TA, SEL } from './components'
 import { useToast } from '../../components/ui'
@@ -9,6 +9,10 @@ import { orgSchema, fieldErrors } from './schemas'
 export default function SiteContentTab() {
   const content = useSite((s) => s.content)
   const set = useSite((s) => s.setContentPath)
+  const addListItem = useSite((s) => s.addListItem)
+  const updateListItem = useSite((s) => s.updateListItem)
+  const removeListItem = useSite((s) => s.removeListItem)
+  const moveListItem = useSite((s) => s.moveListItem)
   const toast = useToast()
   const [presetDraft, setPresetDraft] = useState('')
 
@@ -30,7 +34,7 @@ export default function SiteContentTab() {
     <div className="space-y-5">
       <div>
         <h1 className="font-display text-2xl font-bold">Site content</h1>
-        <p className="text-sm text-ink-500">Names, contact details, homepage copy and donation settings.</p>
+        <p className="text-sm text-ink-500">Names, contact details, homepage copy, FAQs and donation settings.</p>
       </div>
 
       <Panel title={<span className="flex items-center gap-2"><Building2 className="h-4 w-4" /> Organisation</span>} desc="Appears in the header, footer, contact page and AI answers">
@@ -113,8 +117,65 @@ export default function SiteContentTab() {
         </div>
       </Panel>
 
+      <Panel
+        title={<span className="flex items-center gap-2"><HelpCircle className="h-4 w-4" /> Homepage FAQs</span>}
+        desc="The questions shown on the homepage, in this order. The AI assistant answers from them too, so keep them current."
+        actions={
+          <button
+            onClick={() => { addListItem('faqs', { q: 'New question', a: '' }); toast('FAQ added') }}
+            className="btn-primary px-3.5 py-2 text-xs"
+          >
+            <Plus className="h-3.5 w-3.5" /> Add FAQ
+          </button>
+        }
+      >
+        {!(content.faqs || []).length ? (
+          <p className="rounded-xl border border-dashed border-ink-900/10 px-4 py-8 text-center text-sm text-ink-500">
+            No FAQs yet. Add the questions people ask before they donate or volunteer.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {(content.faqs || []).map((f, i) => (
+              <div key={f.id} className="rounded-xl border border-ink-900/10 bg-ink-900/[0.015] p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-ink-500">Question {i + 1}</span>
+                  <span className="flex gap-1">
+                    <button
+                      onClick={() => moveListItem('faqs', i, -1)}
+                      disabled={i === 0}
+                      className="rounded-lg p-1.5 text-ink-500 hover:bg-white disabled:opacity-30"
+                      aria-label="Move up"
+                    >
+                      <ChevronUp className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => moveListItem('faqs', i, 1)}
+                      disabled={i === (content.faqs || []).length - 1}
+                      className="rounded-lg p-1.5 text-ink-500 hover:bg-white disabled:opacity-30"
+                      aria-label="Move down"
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => { removeListItem('faqs', f.id); toast('FAQ removed') }}
+                      className="rounded-lg p-1.5 text-red-600 hover:bg-red-50"
+                      aria-label="Delete"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </span>
+                </div>
+                <TF label="Question" value={f.q} onChange={(v) => updateListItem('faqs', f.id, { q: v })} />
+                <TA label="Answer" rows={3} value={f.a} onChange={(v) => updateListItem('faqs', f.id, { a: v })} className="mt-3" />
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+
       <Panel title={<span className="flex items-center gap-2"><Search className="h-4 w-4" /> SEO</span>} desc="Browser tab title and search description">
-        <TF label="Meta description" value={content.seo.metaDescription} onChange={(v) => set('seo.metaDescription', v)} hint="Around 150 characters. This is what Google shows under your link." />
+        <TF label="Browser tab title" value={content.seo.titleSuffix} onChange={(v) => set('seo.titleSuffix', v)} hint="Shown after the page name in the browser tab, and in Google results for pages that do not set their own title." />
+        <TF label="Meta description" value={content.seo.metaDescription} onChange={(v) => set('seo.metaDescription', v)} className="mt-4" hint="Around 150 characters. This is what Google shows under your link." />
         <TA label="Extra notes for the AI assistant" rows={3} value={content.ai?.extraKnowledge} onChange={(v) => set('ai.extraKnowledge', v)} className="mt-4"
           hint="Anything the assistant should know that is not elsewhere on the site — office rules, holiday closures, specific schemes." />
       </Panel>
