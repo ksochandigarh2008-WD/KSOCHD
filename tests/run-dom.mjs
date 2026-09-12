@@ -669,15 +669,15 @@ const persisted = JSON.stringify(JSON.parse(localStorage.getItem('kso-site-store
 check('fee receipts are persisted, not just held in memory', persisted.includes('KSO/MEM/'),
   persisted.includes('KSO/MEM/') ? 'present in localStorage' : 'MISSING from localStorage')
 
-// Clean up the member this block numMember so later sections see the seed roster.
-await act(async () => {
-  m.useSite.setState((s) => ({
-    memberships: s.memberships.filter((x) => x.id !== numMember.id),
-    feeReceipts: s.feeReceipts.filter((r) => r.memberId !== numMember.id),
-    transactions: s.transactions.filter((t) => t.memberId !== numMember.id),
-  }))
-})
+// Clean up the member this block added, so later sections see the seed roster.
+// Through removeRow — the path the UI actually uses — rather than a raw setState:
+// a hand-written filter has to remember every collection that references a member,
+// and it forgot vouchers, which is how this file used to leave an orphan behind.
+await mutate(() => m.useSite.getState().removeRow('memberships', numMember.id))
 check('test member removed', !m.useSite.getState().memberships.some((x) => x.id === numMember.id))
+check('their renewal records were unlinked, not orphaned',
+  !m.useSite.getState().transactions.some((t) => t.memberId === numMember.id) &&
+  !m.useSite.getState().vouchers.some((v) => v.memberId === numMember.id))
 
 await click(q('[data-nav-item="finance"]'))
 await act(async () => { await new Promise((r) => setTimeout(r, 300)) })
@@ -1045,6 +1045,99 @@ check('the trail records who acted', loggedInEntry?.actor === 'admin@ksochd.org'
 check('the trail records the money movements too',
   (m.useSite.getState().audit || []).some((a) => a.target === 'grants'),
   `entries: ${(m.useSite.getState().audit || []).length}`)
+
+console.log('\n— Deleting a parent repairs what pointed at it —')
+/** Every foreign key in the store that points at a row that no longer exists. */
+const danglingRefs = () => {
+  const s = m.useSite.getState()
+  const alive = (coll, id) => (s[coll] || []).some((r) => r.id === id)
+  const out = []
+  for (const v of s.vouchers || []) {
+    if (v.grantId && !alive('grants', v.grantId)) out.push(`voucher→grant ${v.no}`)
+    if (v.memberId && !alive('memberships', v.memberId)) out.push(`voucher→member ${v.no}`)
+  }
+  for (const t of s.transactions || []) if (t.memberId && !alive('memberships', t.memberId)) out.push(`transaction→member ${t.id.slice(0, 6)}`)
+  for (const r of s.receipts || []) if (r.memberId && !alive('memberships', r.memberId)) out.push(`receipt→member ${r.no}`)
+  for (const r of s.feeReceipts || []) if (r.memberId && !alive('memberships', r.memberId)) out.push(`feeReceipt→member ${r.no}`)
+  for (const p of s.pledges || []) if (p.memberId && !alive('memberships', p.memberId)) out.push(`pledge→member ${p.id.slice(0, 6)}`)
+  return out
+}
+
+// control: deleting a transaction already removed its voucher
+const txToGo = m.useSite.getState().transactions[0]
+const vouchersForTx = m.useSite.getState().vouchers.filter((v) => v.sourceId === txToGo.id).length
+await mutate(() => m.useSite.getState().removeRow('transactions', txToGo.id))
+check('deleting a transaction removes its voucher', vouchersForTx > 0 &&
+  m.useSite.getState().vouchers.filter((v) => v.sourceId === txToGo.id).length === 0)
+
+// a grant with spend posted against it: the money stays, the attribution goes
+const fundedGrant = m.useSite.getState().grants.find(
+  (g) => m.useSite.getState().vouchers.filter((v) => v.grantId === g.id).length > 0)
+const taggedBefore = m.useSite.getState().vouchers.filter((v) => v.grantId === fundedGrant.id).length
+const booksBefore = m.useSite.getState().vouchers.length
+await mutate(() => m.useSite.getState().removeRow('grants', fundedGrant.id))
+const afterGrant = m.useSite.getState()
+check('deleting a grant keeps the posted spend in the books',
+  afterGrant.vouchers.length === booksBefore, `${afterGrant.vouchers.length} of ${booksBefore}`)
+check('its vouchers no longer point at the deleted grant',
+  afterGrant.vouchers.filter((v) => v.grantId === fundedGrant.id).length === 0, `${taggedBefore} were tagged`)
+
+// a member with a paid fee and an issued receipt (what renew() creates)
+const member = m.useSite.getState().memberships[0]
+const paidTx = m.useSite.getState().transactions[0]
+const feeRow = (m.useSite.getState().feeReceipts || [])[0]
+await mutate(() => {
+  const s = m.useSite.getState()
+  s.updateRow('transactions', paidTx.id, { memberId: member.id })
+  if (feeRow) s.updateRow('feeReceipts', feeRow.id, { memberId: member.id })
+})
+const linkedTx = m.useSite.getState().transactions.find((t) => t.memberId === member.id)
+const linkedFee = (m.useSite.getState().feeReceipts || []).find((r) => r.memberId === member.id)
+check('a member can be linked from a transaction and a fee receipt',
+  Boolean(linkedTx) && (feeRow ? Boolean(linkedFee) : true))
+await mutate(() => m.useSite.getState().removeRow('memberships', member.id))
+const afterMember = m.useSite.getState()
+check('deleting a member keeps their transactions in the ledger',
+  afterMember.transactions.some((t) => t.id === paidTx.id))
+check('the kept transaction no longer points at the deleted member',
+  !afterMember.transactions.some((t) => t.memberId === member.id))
+check('the issued fee receipt survives with its link cleared',
+  !feeRow || ((afterMember.feeReceipts || []).some((r) => r.id === feeRow.id) &&
+    !(afterMember.feeReceipts || []).some((r) => r.memberId === member.id)))
+check('nothing in the store points at a deleted parent', danglingRefs().length === 0, danglingRefs().slice(0, 3).join(' | '))
+
+console.log('\n— The go-live checklist points at controls that exist —')
+const checklist = m.production.goLiveChecklist({
+  content: m.useSite.getState().content, settings: m.useSite.getState().settings,
+  memberships: m.useSite.getState().memberships, transactions: m.useSite.getState().transactions,
+})
+const TAB_FILES = {
+  'System': 'src/pages/admin/SystemTab.jsx',
+  'Site content': 'src/pages/admin/SiteContentTab.jsx',
+  'Members': 'src/pages/admin/membership/MembershipTab.jsx',
+  'Finance': 'src/pages/admin/finance/FinanceTab.jsx',
+}
+check('every checklist item names where to fix it', checklist.every((i) => /\S → \S/.test(i.where)),
+  checklist.filter((i) => !/\S → \S/.test(i.where)).map((i) => i.id).join(','))
+for (const item of checklist) {
+  const [tab, control] = item.where.split(' → ')
+  const file = TAB_FILES[tab]
+  if (!file) { check(`'${item.where}' names a real tab`, false, `unknown tab '${tab}'`); continue }
+  const src = readFileSync(file, 'utf8')
+  // JSX escapes a bare & as &amp;, so accept either spelling of the section name.
+  const needle = control.replace(/&amp;/g, '&')
+  const found = src.includes(needle) || src.includes(needle.replace(/&/g, '&amp;'))
+  check(`'${item.where}' names a control that exists`, found, found ? '' : `${file} has no '${needle}'`)
+}
+// The item used to be unsatisfiable: the only writer of showDemoBadge lived in an
+// action nothing called. Assert the flag has a control on the page it points at.
+const sysSrc = readFileSync('src/pages/admin/SystemTab.jsx', 'utf8')
+const badgeControl = sysSrc.includes('showDemoBadge') && sysSrc.includes('Show the demo-data banner')
+check('the demo-badge item is actually satisfiable from the System tab', badgeControl,
+  badgeControl ? '' : 'no control in SystemTab writes showDemoBadge')
+check('production mode alone also satisfies the badge item',
+  m.production.goLiveChecklist({ settings: { productionMode: true, showDemoBadge: true } })
+    .find((i) => i.id === 'demoBadge')?.done === true)
 
 const keyWarnings = consoleErrors.filter((m) => /unique "key"|child in a list|same key/.test(m))
 check('no React key warnings', keyWarnings.length === 0, keyWarnings[0]?.slice(0, 110) || `${consoleErrors.length} console errors seen`)

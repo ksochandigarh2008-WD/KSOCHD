@@ -118,7 +118,7 @@ export function goLiveChecklist({ settings, content, memberships = [], transacti
       id: 'demoData',
       label: 'Demo members and transactions removed',
       why: 'Fake donors in a published annual report is the kind of thing that ends up in a newspaper.',
-      where: 'Members → Clear demo data',
+      where: 'Members → Remove demo rows',
       done: !hasDemoData,
       blocking: false,
     },
@@ -127,7 +127,11 @@ export function goLiveChecklist({ settings, content, memberships = [], transacti
       label: 'Demo badge hidden',
       why: 'Visitors do not need to know the site is a work in progress.',
       where: 'System → Production mode',
-      done: settings?.showDemoBadge === false,
+      // Production mode hides the banner too, so the item is satisfied by either
+      // route. It used to read `showDemoBadge === false` alone, and the only thing
+      // that wrote that flag was an action nothing called — so the item could never
+      // be ticked. The banner is now toggleable directly, next to production mode.
+      done: settings?.showDemoBadge === false || Boolean(settings?.productionMode),
       blocking: false,
     },
     {

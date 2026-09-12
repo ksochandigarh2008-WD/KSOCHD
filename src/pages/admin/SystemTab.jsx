@@ -377,13 +377,25 @@ export default function SystemTab() {
       >
         <Toggle
           label="Production mode"
-          hint="Hides the demo badge, refuses to re-seed demo data, and forces the default password to be changed"
+          hint="Refuses to re-seed demo data and forces the default password to be changed"
           checked={production}
           onChange={(v) => {
             setSettings({ productionMode: v })
             toast(v ? 'Production mode is on' : 'Production mode is off')
           }}
         />
+
+        <div className="mt-3 border-t border-ink-900/5 pt-3">
+          <Toggle
+            label="Show the demo-data banner"
+            hint="The banner on the Overview tells whoever signs in that the figures are samples. It is never shown to visitors, and production mode hides it regardless of this setting."
+            checked={settings.showDemoBadge !== false}
+            onChange={(v) => {
+              setSettings({ showDemoBadge: v })
+              toast(v ? 'Demo banner shown' : 'Demo banner hidden')
+            }}
+          />
+        </div>
 
         {production && (
           <ul className="mt-3 space-y-1 rounded-xl bg-ink-900/[0.04] px-3.5 py-3 text-xs text-ink-600">

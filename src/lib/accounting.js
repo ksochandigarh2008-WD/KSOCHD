@@ -473,10 +473,27 @@ export function grantUtilisation(vouchers, grants = [], accounts = [], { from, t
  * 80G receipts
  * ------------------------------------------------------------------ */
 
+/**
+ * The 80G series. Numbers are drawn from the highest sequence already issued,
+ * never from a count of the rows that happen to exist.
+ *
+ * This used to be `receipts.filter(r => r.no.includes('/' + fy + '/')).length + 1`,
+ * which moves *backwards* when a receipt is deleted — so deleting 0001 of
+ * {0001, 0002} made the next issue 0002 again, and two donors ended up holding the
+ * same number. A receipt number is what a donor quotes to the tax department; it
+ * can never be reused. Same rule as nextFeeReceiptNo below.
+ *
+ * The regex is anchored to this series, so a membership-fee receipt can no longer
+ * inflate the 80G count now that both live in one store.
+ */
 export const nextReceiptNo = (receipts, date) => {
   const fy = fyLabel(date)
-  const used = receipts.filter((r) => r.no?.includes(`/${fy}/`)).length
-  return `KSO/80G/${fy}/${String(used + 1).padStart(4, '0')}`
+  const issued = (receipts || [])
+    .map((r) => String(r?.no || '').match(/^KSO\/80G\/(\d{4}-\d{2})\/(\d+)$/))
+    .filter((m) => m && m[1] === fy)
+    .map((m) => Number(m[2]))
+  const next = (issued.length ? Math.max(...issued) : 0) + 1
+  return `KSO/80G/${fy}/${String(next).padStart(4, '0')}`
 }
 
 /**

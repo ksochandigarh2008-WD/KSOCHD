@@ -65,6 +65,49 @@ check('grant utilisation reported', gu.length === grants.length && gu.some((g) =
 check('80G queue finds donations', m.books.unreceiptedDonations(out, []).length > 0)
 check('receipt numbering is sequential', /\/0001$/.test(m.books.nextReceiptNo([], asOn)))
 
+// A receipt number is what a donor quotes to the tax department, so it must never be
+// handed out twice. Numbering from a COUNT of existing rows moves backwards when a row
+// is deleted: deleting 0001 of {0001,0002} made the next issue 0002 again, and two
+// donors ended up holding the same number (proven in the running panel).
+const rNo = (n) => ({ id: `r${n}`, no: `KSO/80G/${asOn.slice(0, 4)}-${String((Number(asOn.slice(0, 4)) + 1) % 100).padStart(2, '0')}/${String(n).padStart(4, '0')}` })
+check('80G numbering starts at 0001', m.books.nextReceiptNo([], asOn).endsWith('/0001'), m.books.nextReceiptNo([], asOn))
+const three = [rNo(1), rNo(2), rNo(3)]
+check('80G numbering follows the highest issued', m.books.nextReceiptNo(three, asOn).endsWith('/0004'), m.books.nextReceiptNo(three, asOn))
+check('deleting the LAST receipt does not reuse its number',
+  m.books.nextReceiptNo(three.slice(0, 2), asOn).endsWith('/0003'), m.books.nextReceiptNo(three.slice(0, 2), asOn))
+const withGap = [rNo(1), rNo(3)]
+check('deleting a MIDDLE receipt does not reuse its number',
+  m.books.nextReceiptNo(withGap, asOn).endsWith('/0004'), m.books.nextReceiptNo(withGap, asOn))
+// An emptied series restarts at 0001. That is correct — no number is outstanding, so
+// nothing can collide — and stating it here keeps the next reader from "fixing" it into
+// a counter that never resets across years.
+check('an emptied series restarts at 0001', m.books.nextReceiptNo([], asOn).endsWith('/0001'))
+// The 80G series must not be inflated by membership-fee receipts living in the same store.
+const feeNo = (n) => ({ id: `f${n}`, no: `KSO/MEM/${rNo(1).no.split('/')[2]}/${String(n).padStart(4, '0')}` })
+check('membership receipts do not advance the 80G series',
+  m.books.nextReceiptNo([rNo(1), feeNo(1), feeNo(2), feeNo(3)], asOn).endsWith('/0002'),
+  m.books.nextReceiptNo([rNo(1), feeNo(1), feeNo(2), feeNo(3)], asOn))
+check('the two series are numbered independently',
+  m.books.nextFeeReceiptNo([rNo(1), rNo(2), feeNo(1)], asOn).endsWith('/0002'),
+  m.books.nextFeeReceiptNo([rNo(1), rNo(2), feeNo(1)], asOn))
+check('a receipt number from another financial year is ignored',
+  m.books.nextReceiptNo([{ id: 'old', no: 'KSO/80G/2019-20/0009' }], asOn).endsWith('/0001'),
+  m.books.nextReceiptNo([{ id: 'old', no: 'KSO/80G/2019-20/0009' }], asOn))
+
+// CSV exports are opened in Excel, where a leading = + - or @ runs as a formula.
+// Names typed into the public forms reach these exports, so quoting is not enough.
+console.log('\n— CSV export is safe to open in a spreadsheet —')
+const csvCell = (row) => m.fin.toCSV([row], Object.keys(row)).split('\n')[1]
+check('a formula in a cell is defused', csvCell({ Donor: '=HYPERLINK("http://evil.example/?x","Click")' }).includes(`"'=HYPERLINK`),
+  csvCell({ Donor: '=HYPERLINK("http://evil.example/?x","Click")' }).slice(0, 40))
+check('a leading + is defused', csvCell({ Donor: '+91-98765-00003' }).includes(`"'+91`))
+check('a leading @ is defused', csvCell({ Donor: '@SUM(1+1)' }).includes(`"'@SUM`))
+check('a leading minus on TEXT is defused', csvCell({ Donor: '-not-a-number' }).includes(`"'-not`))
+check('numbers are NOT quoted as text', csvCell({ Amount: -500 }) === '"-500"', csvCell({ Amount: -500 }))
+check('plain text is untouched', csvCell({ Donor: 'Anita Verma' }) === '"Anita Verma"')
+check('embedded quotes are still doubled', csvCell({ Donor: 'The "KSO" Fund' }) === '"The ""KSO"" Fund"')
+check('null and blank cells stay empty', csvCell({ Donor: null }) === '""' && csvCell({ Donor: '' }) === '""')
+
 console.log('\n— Admin panel logic —')
 // Previous period must be the same length as the selected one, or the
 // "% vs previous period" figures compare apples to oranges.

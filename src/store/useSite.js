@@ -279,16 +279,43 @@ export const useSite = create(
           }
         })
       },
+      /**
+       * Delete a row and repair anything that pointed at it.
+       *
+       * The money is never touched: deleting a member keeps their past transactions in
+       * the ledger, and deleting a grant keeps the spend that was posted against it.
+       * What must not survive is a *pointer* to a row that no longer exists — a
+       * transaction tagged with a deleted member can never be attributed to anyone
+       * again, and a voucher tagged with a deleted grant can never appear on that
+       * funder's utilisation certificate. So the id is cleared, and the record stays.
+       */
       removeRow: (kind, id) => {
         const gone = (getState()[kind] || []).find((r) => r.id === id)
         getState().logAction('deleted', kind, gone?.party || gone?.name || gone?.donor || gone?.no || id)
         set((s) => {
           const next = { [kind]: (s[kind] || []).filter((r) => r.id !== id) }
-          if (kind !== 'transactions') return next
-          return { ...next, vouchers: (s.vouchers || []).filter((v) => v.sourceId !== id) }
+          /** Blank a foreign key on every row that carries it. */
+          const clear = (rows, field) => (rows || []).map((r) => (r[field] === id ? { ...r, [field]: '' } : r))
+
+          if (kind === 'transactions') {
+            return { ...next, vouchers: (s.vouchers || []).filter((v) => v.sourceId !== id) }
+          }
+          if (kind === 'grants') {
+            return { ...next, vouchers: clear(s.vouchers, 'grantId') }
+          }
+          if (kind === 'memberships') {
+            return {
+              ...next,
+              transactions: clear(s.transactions, 'memberId'),
+              vouchers: clear(s.vouchers, 'memberId'),
+              receipts: clear(s.receipts, 'memberId'),
+              feeReceipts: clear(s.feeReceipts, 'memberId'),
+              pledges: clear(s.pledges, 'memberId'),
+            }
+          }
+          return next
         })
       },
-      setRows: (kind, rows) => set(() => ({ [kind]: rows })),
 
       /* ---------------- membership tiers (settings-backed) ---------------- */
 
@@ -447,14 +474,7 @@ export const useSite = create(
           },
         }))
       },
-      updateAdminUser: (email, patch) =>
-        set((s) => ({
-          settings: {
-            ...s.settings,
-            adminUsers: (s.settings.adminUsers || []).map((u) => (u.email === email ? { ...u, ...patch } : u)),
-          },
-        })),
-      removeAdminUser: (email) => {
+            removeAdminUser: (email) => {
         getState().logAction('removed admin account', email)
         set((s) => ({
           settings: {
@@ -539,16 +559,7 @@ export const useSite = create(
         applyTheme(initialTheme)
       },
 
-      clearDemoData: () =>
-        set((s) => ({
-          submissions: s.submissions.filter((m) => !m.demo),
-          memberships: (s.memberships || []).filter((r) => !r.demo),
-          transactions: (s.transactions || []).filter((r) => !r.demo),
-          pledges: (s.pledges || []).filter((r) => !r.demo),
-          budgets: (s.budgets || []).filter((r) => !r.demo),
-          settings: { ...s.settings, showDemoBadge: false },
-        })),
-    }),
+          }),
     {
       name: 'kso-site-store-v2',
       storage: createJSONStorage(() => localStorage),

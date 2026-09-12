@@ -168,6 +168,7 @@ export default function ReportsTab() {
   const deleteGrant = useDeleteGrant()
   const [grantForm, setGrantForm] = useState({ open: false, grant: null })
   const [confirmGrant, setConfirmGrant] = useState(null)
+  const [confirmReceipt, setConfirmReceipt] = useState(null)
 
   // Statutory documents are built from the books, never from a free-text total.
   const onReceiptPdf = async (r) => {
@@ -523,7 +524,7 @@ export default function ReportsTab() {
                                 <FileDown className="h-4 w-4" />
                               </Button>
                               <Button variant="ghost" size="icon" aria-label={`Delete receipt ${r.no}`}
-                                onClick={async () => { await deleteReceipt.mutateAsync(r.id); toast.success('Receipt deleted') }}>
+                                onClick={() => setConfirmReceipt(r)}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
@@ -623,10 +624,29 @@ export default function ReportsTab() {
         onSaved={() => setGrantForm({ open: false, grant: null })}
       />
       <ConfirmDialog
+        open={Boolean(confirmReceipt)}
+        onOpenChange={(v) => !v && setConfirmReceipt(null)}
+        title={`Delete receipt ${confirmReceipt?.no}?`}
+        description={`${confirmReceipt?.donor || 'This donor'} was issued this number, and a receipt number is never reissued. The donation stays in the books and can be receipted again with a new number.`}
+        confirmLabel="Delete receipt"
+        destructive
+        onConfirm={async () => {
+          try { await deleteReceipt.mutateAsync(confirmReceipt.id); toast.success('Receipt deleted') }
+          catch (e) { toast.error(e.message) }
+          setConfirmReceipt(null)
+        }}
+      />
+      <ConfirmDialog
         open={Boolean(confirmGrant)}
         onOpenChange={(v) => !v && setConfirmGrant(null)}
         title={`Delete the ${confirmGrant?.donor} grant?`}
-        description="The grant record goes. Vouchers already posted against it stay in the books."
+        description={
+          (() => {
+            const n = vouchers.filter((v) => v.grantId === confirmGrant?.id).length
+            if (!n) return 'The grant record goes. No vouchers are tagged to it, so the books are unaffected.'
+            return `The grant record goes. The ${n} voucher${n === 1 ? '' : 's'} posted against it stay in the books, but will lose their link to this grant — their spend can no longer be reported on this funder's utilisation certificate.`
+          })()
+        }
         confirmLabel="Delete grant"
         destructive
         onConfirm={async () => {

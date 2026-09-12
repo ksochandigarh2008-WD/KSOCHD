@@ -2,7 +2,7 @@
 
 Written so a failed turn costs nothing. **Read this first when resuming.**
 
-Last verified state: **`npm test` → 522 PASS / 0 FAIL**, `npx vite build` ✓ (12 s).
+Last verified state: **`npm test` → 564 PASS / 0 FAIL**, `npx vite build` ✓ (12 s).
 Environment note: `node_modules` is NOT persisted between sessions — run `npm ci` first (≈7 s).
 
 ---
@@ -218,6 +218,34 @@ Sound and worth recording: backup/restore round-trips all 14 collections byte-id
 `importAll` type-checks every collection; transaction→voucher add/edit/delete wiring is correct
 including the cascade; every action the UI calls exists; the audit trail has a viewer; the Inbox
 clear is honestly labelled.
+
+## Admin / core audit — all six fixed (plus a seventh)
+
+Suite: **564 PASS / 0 FAIL** (was 522; 42 new checks, none removed). 0 console errors.
+
+- **F1 (the compliance one).** `nextReceiptNo` takes max+1 within its own series instead of
+  counting rows. Re-running the exact UI scenario that produced a duplicate — issue 0001 and
+  0002, delete 0001, re-issue — now yields **0003**. The receipt delete sits behind a confirm
+  dialog that says the number is never reissued, and cancelling keeps the row.
+- **F2.** A **Show the demo-data banner** toggle beside production mode, and the checklist item
+  now also accepts production mode (which always hid the banner). Proven: banner visible → toggle
+  → gone.
+- **F3.** The `demoData` pointer names the real button (Remove demo rows). A test parses all 14
+  `where` pointers and asserts each names a control that exists in the tab it names — that class
+  of drift cannot come back silently.
+- **F4.** Deleting a grant keeps the spend and clears `grantId`, so no voucher points at a dead
+  grant. The dialog now says so and names the count: *"The 11 vouchers posted against it stay in
+  the books, but will lose their link to this grant…"*
+- **F5.** `clearDemoData`, `setRows` and `updateAdminUser` deleted — no callers.
+- **F6.** `toCSV` defuses a leading `= + - @` on text cells so a hostile name from a public form
+  cannot execute in an admin's spreadsheet. Numbers are left numeric.
+- **F7 (found while fixing F4).** Deleting a member left the same orphans — transactions,
+  vouchers, receipts, fee receipts and pledges pointing at a dead id. Same fix; a store-wide
+  sweep now asserts no collection references a row that no longer exists.
+
+One test-side fix worth noting: an earlier test cleaned up its own fixture with a raw `setState`
+filter that forgot vouchers, which is exactly how a dangling reference is born. It deletes through
+`removeRow` now — the path the UI uses.
 
 ## Not started
 
